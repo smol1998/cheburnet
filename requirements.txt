@@ -3,7 +3,8 @@ uvicorn[standard]
 sqlalchemy>=2.0
 pydantic
 python-jose[cryptography]
-passlib[bcrypt]
+passlib==1.7.4
+bcrypt==3.2.2
 python-multipart
 pyjwt
 
