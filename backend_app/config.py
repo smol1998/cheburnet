@@ -8,9 +8,10 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24 * 7  # 7 days
 
     # DB (SQLite file in backend/ folder)
-    database_url: str = "sqlite:///./mvp.db"
+    class Settings(BaseSettings):
+        database_url: str = "sqlite:////tmp/mvp.db"
 
-    # Files storage
+        # Files storage
     storage_dir: str = "./storage"
 
     class Config:
