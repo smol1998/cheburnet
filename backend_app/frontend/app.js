@@ -17,13 +17,16 @@ let typingStopTimer = null;
 function authHeaders() {
   return { "Authorization": "Bearer " + token, "Content-Type": "application/json" };
 }
+
 function setMeUI() {
   document.getElementById("me").innerHTML = me ? `@${me.username}` : `<small>not logged in</small>`;
 }
+
 function setOnlineUI(on) {
   const dot = document.getElementById("onlineDot");
   dot.classList.toggle("online", !!on);
 }
+
 function setTypingUI(txt) {
   document.getElementById("typingText").textContent = txt || "";
 }
@@ -31,12 +34,21 @@ function setTypingUI(txt) {
 async function readError(r) {
   let txt = "";
   try { txt = await r.text(); } catch (_) {}
-  // FastAPI often returns {"detail": "..."}; try parse
   try {
     const j = JSON.parse(txt);
     if (j && j.detail) return String(j.detail);
   } catch (_) {}
   return txt || `HTTP ${r.status}`;
+}
+
+// <img>/<video>/<a href> не отправляют Authorization header,
+// поэтому добавляем ?token=... к ссылке на файл
+function fileUrlWithToken(urlPath) {
+  const base = (API || "") + urlPath; // urlPath вида "/files/1"
+  if (!token) return base;
+  return base.includes("?")
+    ? `${base}&token=${encodeURIComponent(token)}`
+    : `${base}?token=${encodeURIComponent(token)}`;
 }
 
 async function register() {
@@ -86,9 +98,7 @@ async function loadMe() {
 function connectWS() {
   if (ws) ws.close();
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-ws = new WebSocket(`${protocol}//${location.host}/ws?token=${encodeURIComponent(token)}`);
-
-
+  ws = new WebSocket(`${protocol}//${location.host}/ws?token=${encodeURIComponent(token)}`);
 
   ws.onmessage = (ev) => {
     const data = JSON.parse(ev.data);
@@ -227,11 +237,8 @@ async function loadMessagesPage(beforeId=null, prepend=false) {
 
   if (nextBeforeId) {
     const topHint = `<div class="loadmore" id="loadmore"><small>Scroll up to load more…</small></div>`;
-    if (prepend) {
-      msgs.insertAdjacentHTML("afterbegin", topHint);
-    } else {
-      msgs.insertAdjacentHTML("beforeend", topHint);
-    }
+    if (prepend) msgs.insertAdjacentHTML("afterbegin", topHint);
+    else msgs.insertAdjacentHTML("beforeend", topHint);
   }
 
   if (prepend) {
@@ -248,19 +255,28 @@ async function loadMessagesPage(beforeId=null, prepend=false) {
 
 function renderAttachments(atts) {
   if (!atts || !atts.length) return "";
+
   return atts.map(a => {
-    const url = API + a.url;
+    const url = fileUrlWithToken(a.url);
+    const name = escapeHtml(a.name || "file");
+
     if (a.mime && a.mime.startsWith("image/")) {
       return `<div style="margin-top:6px">
         <img src="${url}" style="max-width:280px;border-radius:12px;border:1px solid #222"/>
+        <div><a href="${url}" target="_blank" download>⬇️ ${name}</a></div>
       </div>`;
     }
+
     if (a.mime && a.mime.startsWith("video/")) {
       return `<div style="margin-top:6px">
         <video src="${url}" controls style="max-width:360px;border-radius:12px;border:1px solid #222"></video>
+        <div><a href="${url}" target="_blank" download>⬇️ ${name}</a></div>
       </div>`;
     }
-    return `<div style="margin-top:6px"><a href="${url}" target="_blank">📎 ${escapeHtml(a.name || "file")}</a></div>`;
+
+    return `<div style="margin-top:6px">
+      <a href="${url}" target="_blank" download>📎 ⬇️ ${name}</a>
+    </div>`;
   }).join("");
 }
 
@@ -325,7 +341,11 @@ async function send() {
   if (f) {
     const fd = new FormData();
     fd.append("file", f);
-    const r = await fetch(API + "/files/upload", { method:"POST", headers: { "Authorization":"Bearer " + token }, body: fd });
+    const r = await fetch(API + "/files/upload", {
+      method:"POST",
+      headers: { "Authorization":"Bearer " + token },
+      body: fd
+    });
     if (!r.ok) {
       alert("Upload failed: " + await readError(r));
       return;
