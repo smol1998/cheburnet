@@ -5,6 +5,7 @@ pydantic
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
+pyjwt
 
 alembic
 psycopg2-binary
