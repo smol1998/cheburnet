@@ -1,33 +1,25 @@
 import os
 import uuid
-
-from fastapi import APIRouter, Depends, UploadFile, File as UpFile, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File as UpFile, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from backend_app.deps import get_db, get_current_user
 from backend_app.config import settings
 from backend_app import models
+from backend_app.security import decode_token
 
 router = APIRouter()
 
 ALLOWED_PREFIXES = ("image/", "video/", "application/", "text/")
 
-
 def get_max_upload_bytes() -> int:
-    """
-    MAX_UPLOAD_MB:
-      - 0 or not set -> unlimited
-      - N -> limit in megabytes
-    """
-    raw = os.getenv("MAX_UPLOAD_MB", "").strip()
-    if not raw:
-        return 0
-    try:
-        mb = int(raw)
-    except ValueError:
-        return 0
-    if mb <= 0:
+    # По умолчанию БЕЗ лимита (0 = unlimited)
+    # Можно задать в env: MAX_UPLOAD_MB=200
+    mb = getattr(settings, "max_upload_mb", None)
+    if mb is None:
+        mb = int(os.getenv("MAX_UPLOAD_MB", "0"))
+    if not mb or mb <= 0:
         return 0
     return mb * 1024 * 1024
 
@@ -42,7 +34,6 @@ async def upload(
         raise HTTPException(400, "Unsupported file type")
 
     os.makedirs(settings.storage_dir, exist_ok=True)
-
     ext = os.path.splitext(file.filename or "")[1]
     name = f"{uuid.uuid4().hex}{ext}"
     path = os.path.join(settings.storage_dir, name)
@@ -50,37 +41,22 @@ async def upload(
     max_bytes = get_max_upload_bytes()
 
     size = 0
-    try:
-        with open(path, "wb") as f:
-            while True:
-                chunk = await file.read(1024 * 1024)  # 1MB chunks
-                if not chunk:
-                    break
-                size += len(chunk)
+    with open(path, "wb") as f:
+        while True:
+            chunk = await file.read(1024 * 1024)  # 1MB
+            if not chunk:
+                break
+            size += len(chunk)
 
-                # лимит управляется env MAX_UPLOAD_MB (по умолчанию unlimited)
-                if max_bytes and size > max_bytes:
-                    raise HTTPException(
-                        400,
-                        f"File too large (max {max_bytes // (1024 * 1024)}MB)"
-                    )
+            if max_bytes and size > max_bytes:
+                f.close()
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+                raise HTTPException(400, f"File too large (max {max_bytes // (1024*1024)}MB)")
 
-                f.write(chunk)
-    except HTTPException:
-        # удалим недописанный файл
-        try:
-            if os.path.exists(path):
-                os.remove(path)
-        except Exception:
-            pass
-        raise
-    except Exception as e:
-        try:
-            if os.path.exists(path):
-                os.remove(path)
-        except Exception:
-            pass
-        raise HTTPException(500, f"Upload failed: {e}")
+            f.write(chunk)
 
     rec = models.File(
         owner_id=user.id,
@@ -115,10 +91,32 @@ def user_can_access_file(db: Session, user_id: int, file_id: int) -> bool:
 
 
 @router.get("/{file_id}")
-def download(file_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def download(
+    file_id: int,
+    token: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """
+    Вариант 1: обычный (через Authorization header) — работает для fetch/XHR.
+    Вариант 2: для <img>/<video>/<a> можно передать ?token=... (header там не поставить).
+    """
+    if token:
+        # если token передали — авторизуемся по нему вручную
+        try:
+            payload = decode_token(token)
+            user_id = int(payload.get("sub"))
+        except Exception:
+            raise HTTPException(401, "Invalid token")
+        user = db.get(models.User, user_id)
+        if not user:
+            raise HTTPException(401, "Invalid token")
+
     rec = db.get(models.File, file_id)
     if not rec:
         raise HTTPException(404, "Not found")
+
     if not user_can_access_file(db, user.id, file_id):
         raise HTTPException(403, "Forbidden")
+
     return FileResponse(rec.path, media_type=rec.mime, filename=rec.original_name)

@@ -1,5 +1,4 @@
-// IMPORTANT: when frontend is served by FastAPI, use relative API
-const API = ""
+const API = "";
 
 let token = localStorage.getItem("token") || "";
 let me = null;
@@ -13,6 +12,50 @@ let otherLastRead = 0;
 let typingTimer = null;
 let typingActive = false;
 let typingStopTimer = null;
+
+// ---------- Upload progress UI ----------
+function ensureUploadUI() {
+  let el = document.getElementById("uploadStatus");
+  if (!el) {
+    const card = document.querySelector(".main .card:last-of-type");
+    const small = card ? card.querySelector("small") : null;
+
+    const div = document.createElement("div");
+    div.id = "uploadStatus";
+    div.style.marginTop = "8px";
+    div.style.fontSize = "12px";
+    div.style.color = "#aaa";
+    div.style.display = "none";
+    div.innerHTML = `
+      <div id="uploadText">—</div>
+      <div style="margin-top:6px;border:1px solid #222;border-radius:10px;overflow:hidden;height:10px;">
+        <div id="uploadBar" style="height:10px;width:0%;background:rgb(137,243,54);transition:width .08s linear;"></div>
+      </div>
+    `;
+    if (small && small.parentNode) small.parentNode.insertBefore(div, small);
+    else document.body.appendChild(div);
+    el = div;
+  }
+  return el;
+}
+
+function showUploadStatus(text, pct = null) {
+  ensureUploadUI();
+  const box = document.getElementById("uploadStatus");
+  const t = document.getElementById("uploadText");
+  const b = document.getElementById("uploadBar");
+  box.style.display = "block";
+  if (t) t.textContent = text || "";
+  if (b) {
+    if (pct === null || pct === undefined) b.style.width = "0%";
+    else b.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  }
+}
+
+function hideUploadStatus() {
+  const box = document.getElementById("uploadStatus");
+  if (box) box.style.display = "none";
+}
 
 function authHeaders() {
   return { "Authorization": "Bearer " + token, "Content-Type": "application/json" };
@@ -41,16 +84,7 @@ async function readError(r) {
   return txt || `HTTP ${r.status}`;
 }
 
-// <img>/<video>/<a href> не отправляют Authorization header,
-// поэтому добавляем ?token=... к ссылке на файл
-function fileUrlWithToken(urlPath) {
-  const base = (API || "") + urlPath; // urlPath вида "/files/1"
-  if (!token) return base;
-  return base.includes("?")
-    ? `${base}&token=${encodeURIComponent(token)}`
-    : `${base}?token=${encodeURIComponent(token)}`;
-}
-
+// ---------- auth ----------
 async function register() {
   const username = u.value.trim(), password = p.value.trim();
   const r = await fetch(API + "/auth/register", {
@@ -58,10 +92,7 @@ async function register() {
     headers:{ "Content-Type":"application/json" },
     body: JSON.stringify({ username, password })
   });
-  if (!r.ok) {
-    alert("Register failed: " + await readError(r));
-    return;
-  }
+  if (!r.ok) return alert("Register failed: " + await readError(r));
   alert("Registered. Now login.");
 }
 
@@ -72,13 +103,12 @@ async function login() {
     headers:{ "Content-Type":"application/json" },
     body: JSON.stringify({ username, password })
   });
-  if (!r.ok) {
-    alert("Login failed: " + await readError(r));
-    return;
-  }
+  if (!r.ok) return alert("Login failed: " + await readError(r));
+
   const j = await r.json();
   token = j.access_token;
   localStorage.setItem("token", token);
+
   await loadMe();
   connectWS();
   await loadDialogs();
@@ -86,15 +116,12 @@ async function login() {
 
 async function loadMe() {
   const r = await fetch(API + "/auth/me", { headers: { "Authorization":"Bearer " + token }});
-  if (!r.ok) {
-    me = null;
-    setMeUI();
-    return;
-  }
+  if (!r.ok) { me = null; setMeUI(); return; }
   me = await r.json();
   setMeUI();
 }
 
+// ---------- ws ----------
 function connectWS() {
   if (ws) ws.close();
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -128,27 +155,21 @@ function connectWS() {
       updateReadMarks();
     }
   };
-
-  ws.onopen = () => console.log("ws connected");
-  ws.onerror = (e) => console.log("ws error", e);
 }
 
 function wsSend(obj) {
-  try {
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
-  } catch (_) {}
+  try { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); } catch (_) {}
 }
 
+// ---------- users / dialogs ----------
 async function search() {
   if (!token) return alert("Login first");
   const query = q.value.trim();
   const r = await fetch(API + `/users/search?q=${encodeURIComponent(query)}`, {
     headers: { "Authorization":"Bearer " + token }
   });
-  if (!r.ok) {
-    alert("Search failed: " + await readError(r));
-    return;
-  }
+  if (!r.ok) return alert("Search failed: " + await readError(r));
+
   const list = await r.json();
   searchRes.innerHTML = list.map(u =>
     `<div class="list-item" onclick="startDM(${u.id}, '${u.username.replaceAll("'","")}')">@${u.username}</div>`
@@ -161,10 +182,8 @@ async function startDM(otherId, username) {
     headers: authHeaders(),
     body: JSON.stringify({ other_user_id: otherId })
   });
-  if (!r.ok) {
-    alert("Start DM failed: " + await readError(r));
-    return;
-  }
+  if (!r.ok) return alert("Start DM failed: " + await readError(r));
+
   const j = await r.json();
   await loadDialogs();
   openChat(j.chat_id, otherId, username);
@@ -173,10 +192,8 @@ async function startDM(otherId, username) {
 async function loadDialogs() {
   if (!token) return;
   const r = await fetch(API + "/chats/dm/list", { headers: { "Authorization":"Bearer " + token }});
-  if (!r.ok) {
-    alert("Load dialogs failed: " + await readError(r));
-    return;
-  }
+  if (!r.ok) return alert("Load dialogs failed: " + await readError(r));
+
   const list = await r.json();
   dialogs.innerHTML = list.map(d => {
     const online = d.other_online ? "online" : "";
@@ -186,6 +203,7 @@ async function loadDialogs() {
   }).join("");
 }
 
+// ---------- messages ----------
 async function openChat(chatId, otherId, title) {
   currentChatId = chatId;
   currentOtherId = otherId;
@@ -200,9 +218,7 @@ async function openChat(chatId, otherId, title) {
   wsSend({ type: "presence:subscribe", chat_id: chatId });
 
   await loadMessagesPage();
-
   msgs.scrollTop = msgs.scrollHeight;
-
   await maybeMarkRead();
 
   msgs.onscroll = async () => {
@@ -223,12 +239,9 @@ async function loadMessagesPage(beforeId=null, prepend=false) {
   if (beforeId) url.searchParams.set("before_id", String(beforeId));
 
   const r = await fetch(url.toString(), { headers: { "Authorization":"Bearer " + token }});
-  if (!r.ok) {
-    alert("Load messages failed: " + await readError(r));
-    return;
-  }
-  const j = await r.json();
+  if (!r.ok) return alert("Load messages failed: " + await readError(r));
 
+  const j = await r.json();
   nextBeforeId = j.next_before_id;
   otherLastRead = j.read_state?.other_last_read || otherLastRead;
 
@@ -253,30 +266,32 @@ async function loadMessagesPage(beforeId=null, prepend=false) {
   updateReadMarks();
 }
 
+function fileUrlWithToken(aUrl) {
+  // aUrl приходит как "/files/123"
+  // Для <img>/<video> добавляем token query, чтобы не было 401
+  if (!token) return API + aUrl;
+  const sep = aUrl.includes("?") ? "&" : "?";
+  return API + aUrl + `${sep}token=${encodeURIComponent(token)}`;
+}
+
 function renderAttachments(atts) {
   if (!atts || !atts.length) return "";
-
   return atts.map(a => {
     const url = fileUrlWithToken(a.url);
-    const name = escapeHtml(a.name || "file");
 
     if (a.mime && a.mime.startsWith("image/")) {
       return `<div style="margin-top:6px">
-        <img src="${url}" style="max-width:280px;border-radius:12px;border:1px solid #222"/>
-        <div><a href="${url}" target="_blank" download>⬇️ ${name}</a></div>
+        <img src="${url}" loading="lazy"
+             style="max-width:280px;border-radius:12px;border:1px solid #222"/>
       </div>`;
     }
-
     if (a.mime && a.mime.startsWith("video/")) {
       return `<div style="margin-top:6px">
-        <video src="${url}" controls style="max-width:360px;border-radius:12px;border:1px solid #222"></video>
-        <div><a href="${url}" target="_blank" download>⬇️ ${name}</a></div>
+        <video src="${url}" controls preload="metadata"
+               style="max-width:360px;border-radius:12px;border:1px solid #222"></video>
       </div>`;
     }
-
-    return `<div style="margin-top:6px">
-      <a href="${url}" target="_blank" download>📎 ⬇️ ${name}</a>
-    </div>`;
+    return `<div style="margin-top:6px"><a href="${url}" target="_blank">📎 ${escapeHtml(a.name || "file")}</a></div>`;
   }).join("");
 }
 
@@ -332,45 +347,92 @@ async function maybeMarkRead() {
   });
 }
 
+// ---------- upload with progress ----------
+function uploadFileWithProgress(fileObj) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", API + "/files/upload", true);
+    xhr.setRequestHeader("Authorization", "Bearer " + token);
+
+    const startedAt = Date.now();
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+
+        const seconds = Math.max(1, (Date.now() - startedAt) / 1000);
+        const mbps = (e.loaded / 1024 / 1024) / seconds;
+        showUploadStatus(`Загрузка: ${pct}% • ${mbps.toFixed(1)} MB/s`, pct);
+      } else {
+        showUploadStatus("Загрузка файла…", 10);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const j = JSON.parse(xhr.responseText);
+          showUploadStatus("Файл загружен ✅", 100);
+          resolve(j);
+        } catch (err) {
+          reject(new Error("Bad JSON from upload"));
+        }
+      } else {
+        reject(new Error(xhr.responseText || `Upload HTTP ${xhr.status}`));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.onabort = () => reject(new Error("Upload aborted"));
+
+    const fd = new FormData();
+    fd.append("file", fileObj);
+    showUploadStatus("Загрузка: 0%", 0);
+    xhr.send(fd);
+  });
+}
+
+// ---------- send ----------
 async function send() {
   if (!currentChatId) return alert("Select a chat first");
 
   let fileIds = [];
   const f = file.files[0];
 
-  if (f) {
-    const fd = new FormData();
-    fd.append("file", f);
-    const r = await fetch(API + "/files/upload", {
+  try {
+    if (f) {
+      const j = await uploadFileWithProgress(f);
+      fileIds.push(j.file_id);
+      file.value = "";
+    }
+
+    showUploadStatus("Отправка сообщения…", 100);
+
+    const textVal = text.value;
+    const r2 = await fetch(API + `/chats/dm/${currentChatId}/send`, {
       method:"POST",
-      headers: { "Authorization":"Bearer " + token },
-      body: fd
+      headers: authHeaders(),
+      body: JSON.stringify({ text: textVal, file_ids: fileIds })
     });
-    if (!r.ok) {
-      alert("Upload failed: " + await readError(r));
+
+    if (!r2.ok) {
+      alert("Send failed: " + await readError(r2));
+      hideUploadStatus();
       return;
     }
-    const j = await r.json();
-    fileIds.push(j.file_id);
-    file.value = "";
-  }
 
-  const textVal = text.value;
-  const r2 = await fetch(API + `/chats/dm/${currentChatId}/send`, {
-    method:"POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ text: textVal, file_ids: fileIds })
-  });
-  if (!r2.ok) {
-    alert("Send failed: " + await readError(r2));
-    return;
-  }
-  const m = await r2.json();
-  text.value = "";
+    const m = await r2.json();
+    text.value = "";
 
-  renderMessage(m);
-  stopTyping();
-  await maybeMarkRead();
+    renderMessage(m);
+    stopTyping();
+    await maybeMarkRead();
+    hideUploadStatus();
+
+  } catch (e) {
+    alert("Upload failed: " + (e?.message || e));
+    hideUploadStatus();
+  }
 }
 
 function onTyping() {
@@ -396,6 +458,7 @@ function escapeHtml(s) {
 }
 
 (async () => {
+  ensureUploadUI();
   if (token) {
     await loadMe();
     connectWS();
