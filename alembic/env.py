@@ -8,6 +8,9 @@ from backend_app.models import Base
 from backend_app import models  # noqa: F401  (нужно для autogenerate)
 
 config = context.config
+from backend_app.config import settings
+config.set_main_option("sqlalchemy.url", settings.database_url)
+
 
 if config.config_file_name:
     fileConfig(config.config_file_name)
