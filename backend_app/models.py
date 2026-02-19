@@ -3,6 +3,7 @@ from sqlalchemy import (
     Column, Integer, String, DateTime, ForeignKey, Text, UniqueConstraint
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.dialects.postgresql import BYTEA
 
 
 class Base(DeclarativeBase):
@@ -16,15 +17,12 @@ class User(Base):
     username = Column(String(64), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
 
-    # профиль
     birth_year = Column(Integer, nullable=True)
 
-    # аватар — ссылка на files.id
     avatar_file_id = Column(Integer, ForeignKey("files.id"), nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    # ✅ Явно указываем какой FK используется (иначе ambiguous)
     avatar = relationship("File", foreign_keys=[avatar_file_id], uselist=False)
 
 
@@ -58,16 +56,20 @@ class File(Base):
 
     id = Column(Integer, primary_key=True)
 
-    # владелец файла — ссылка на users.id
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
     original_name = Column(String(255), nullable=False)
     mime = Column(String(128), nullable=False)
     size = Column(Integer, nullable=False)
-    path = Column(String(512), nullable=False)
+
+    # раньше было обязательно, но на Railway Free диска нет — делаем nullable
+    path = Column(String(512), nullable=True)
+
+    # ✅ хранение в Postgres (BYTEA) — то, что спасает аватарки на Railway Free
+    data = Column(BYTEA, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    # ✅ ВАЖНО: явно указываем FK owner_id, иначе ambiguous
     owner = relationship("User", foreign_keys=[owner_id])
 
 

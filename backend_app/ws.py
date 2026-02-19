@@ -1,4 +1,7 @@
+# ws.py
 import json
+from typing import Any, Optional
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from sqlalchemy.orm import Session
 
@@ -7,6 +10,20 @@ from backend_app.db import SessionLocal
 from backend_app import models
 
 router = APIRouter()
+
+
+def _payload_to_user_id(payload: Any) -> Optional[int]:
+    if isinstance(payload, int):
+        return payload
+    if isinstance(payload, dict):
+        sub = payload.get("sub")
+        if sub is None:
+            return None
+        try:
+            return int(sub)
+        except Exception:
+            return None
+    return None
 
 
 def get_other_user_id(db: Session, chat_id: int, me_id: int) -> int | None:
@@ -40,7 +57,11 @@ class WSManager:
 
     async def send(self, user_id: int, payload: dict):
         for ws in list(self.by_user.get(user_id, set())):
-            await ws.send_json(payload)
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                # если сокет умер — не валим всех
+                pass
 
     def subscribe(self, user_id: int, chat_id: int):
         self.subscriptions.setdefault(user_id, set()).add(chat_id)
@@ -59,7 +80,9 @@ manager = WSManager()
 async def ws_endpoint(ws: WebSocket, token: str = Query(...)):
     try:
         payload = decode_token(token)
-        user_id = int(payload["sub"])
+        user_id = _payload_to_user_id(payload)
+        if not user_id:
+            raise Exception("bad token payload")
     except Exception:
         await ws.close(code=1008)
         return
