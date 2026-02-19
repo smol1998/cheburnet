@@ -1,4 +1,6 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from typing import Any
+
 from jose import jwt
 from passlib.context import CryptContext
 
@@ -6,21 +8,43 @@ from backend_app.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+
+def _bcrypt_safe_password(password: str) -> str:
+    """
+    bcrypt ограничивает пароль 72 БАЙТА.
+    Если резать строку "по символам" или decode(ignore) — можно случайно получить >72 байт.
+    Поэтому режем именно байты и декодируем обратно строго.
+    """
+    b = (password or "").encode("utf-8")
+    if len(b) <= 72:
+        return password or ""
+
+    cut = b[:72]
+    # Важно: не оставлять "обрезанный" UTF-8 символ в конце
+    while True:
+        try:
+            return cut.decode("utf-8")
+        except UnicodeDecodeError:
+            cut = cut[:-1]
+            if not cut:
+                return ""
+
+
 def hash_password(password: str) -> str:
-    # bcrypt ограничение 72 байта — режем
-    return pwd_context.hash(password.encode("utf-8")[:72].decode("utf-8", "ignore"))
+    pw = _bcrypt_safe_password(password)
+    return pwd_context.hash(pw)
+
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return pwd_context.verify(password.encode("utf-8")[:72].decode("utf-8", "ignore"), password_hash)
+    pw = _bcrypt_safe_password(password)
+    return pwd_context.verify(pw, password_hash)
+
 
 def create_token(user_id: int) -> str:
-    now = datetime.now(timezone.utc)
-    payload = {
-        "sub": str(user_id),
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=settings.access_token_expire_minutes)).timestamp()),
-    }
+    expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
+    payload = {"sub": str(user_id), "exp": expire}
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
-def decode_token(token: str):
+
+def decode_token(token: str) -> Any:
     return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])

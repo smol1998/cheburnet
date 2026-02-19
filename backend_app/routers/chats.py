@@ -2,13 +2,23 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
 from backend_app.deps import get_db, get_current_user
 from backend_app import models
 from backend_app.ws import manager
 
 router = APIRouter()
+
+
+def user_public(u: models.User) -> dict:
+    avatar_file_id = getattr(u, "avatar_file_id", None)
+    return {
+        "id": u.id,
+        "username": u.username,
+        "avatar_file_id": avatar_file_id,
+        "avatar_url": (f"/files/{avatar_file_id}" if avatar_file_id else None),
+    }
 
 
 class StartDMIn(BaseModel):
@@ -84,7 +94,7 @@ def start_dm(data: StartDMIn, db: Session = Depends(get_db), user=Depends(get_cu
         db.add(models.DMRead(chat_id=chat.id, user_id=other.id, last_read_message_id=0))
         db.commit()
 
-    return {"chat_id": chat.id, "with": {"id": other.id, "username": other.username}}
+    return {"chat_id": chat.id, "with": user_public(other)}
 
 
 @router.get("/dm/list")
@@ -101,13 +111,23 @@ def list_dm(db: Session = Depends(get_db), user=Depends(get_current_user)):
     for c in chats:
         oid = other_id(c, user.id)
         other = db.get(models.User, oid)
+
+        # ✅ последнее ВХОДЯЩЕЕ (не от меня) сообщение — только оно влияет на NEW
+        last_incoming_id = (
+                               db.query(func.max(models.Message.id))
+                               .filter(models.Message.chat_id == c.id)
+                               .filter(models.Message.sender_id != user.id)
+                               .scalar()
+                           ) or 0
+
         out.append(
             {
                 "chat_id": c.id,
-                "other": {"id": other.id, "username": other.username},
+                "other": user_public(other),
                 "other_online": manager.is_online(oid),
                 "my_last_read": get_read_state(db, c.id, user.id),
                 "other_last_read": get_read_state(db, c.id, oid),
+                "last_incoming_id": int(last_incoming_id),
             }
         )
     return out

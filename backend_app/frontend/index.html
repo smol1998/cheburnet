@@ -1,95 +1,702 @@
 <!doctype html>
-<html>
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Messenger MVP</title>
+
+  <!-- чтобы не было 404 favicon -->
+  <link rel="icon" href="data:,">
+
   <style>
-    :root { --green: rgb(137,243,54); --bg: #000; --panel: #0b0b0b; --text: #eaeaea; }
-    body { margin:0; font-family: system-ui, Arial; background: var(--bg); color: var(--text); }
-    .top { padding:12px 16px; border-bottom: 1px solid #222; display:flex; gap:12px; align-items:center; }
-    .brand { color: var(--green); font-weight: 800; letter-spacing: .5px; }
-    input, button { background:#111; color:var(--text); border:1px solid #333; padding:10px; border-radius:10px; }
-    button { cursor:pointer; border-color: var(--green); }
-    button:hover { filter: brightness(1.1); }
-    .wrap { display:grid; grid-template-columns: 320px 1fr; height: calc(100vh - 58px); }
-    .side { border-right:1px solid #222; background: var(--panel); padding:12px; overflow:auto; }
-    .main { padding:12px; display:flex; flex-direction:column; gap:10px; }
-    .card { border:1px solid #222; border-radius:14px; padding:12px; background:#070707; }
-    .list-item { padding:10px; border:1px solid #222; border-radius:12px; margin:8px 0; cursor:pointer; }
-    .list-item:hover { border-color: var(--green); }
-    .msgs { flex:1; overflow:auto; border:1px solid #222; border-radius:14px; padding:12px; background:#060606; }
-    .msg { margin:10px 0; }
-    .me { color: var(--green); }
-    .row { display:flex; gap:8px; }
-    .grow { flex:1; }
-    small { color:#aaa; }
-    a { color: var(--green); }
-    .chatbar { display:flex; gap:10px; align-items:center; }
-    .dot { width:10px; height:10px; border-radius:50%; background:#444; display:inline-block; }
-    .dot.online { background: var(--green); }
-    .typing { color:#aaa; }
-    .loadmore { text-align:center; margin:8px 0; }
+    :root{
+      --bg:#070707;
+      --panel:#0f0f10;
+      --panel2:#0b0b0c;
+      --stroke2:rgba(255,255,255,.08);
+      --stroke:rgba(0,255,120,.18);
+      --text:#e9e9e9;
+      --muted:#a6a6a6;
+      --accent:#73ff3b;
+      --accent2:#1cff7d;
+      --shadow:0 10px 30px rgba(0,0,0,.45);
+      --radius:16px;
+
+      --gap:12px;
+      --pad:12px;
+
+      --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
+
+      --btnH:42px;
+      --inputH:42px;
+
+      --sat: env(safe-area-inset-top, 0px);
+      --sar: env(safe-area-inset-right, 0px);
+      --sab: env(safe-area-inset-bottom, 0px);
+      --sal: env(safe-area-inset-left, 0px);
+    }
+
+    *{box-sizing:border-box}
+    html,body{height:100%}
+
+    body{
+      margin:0;
+      font-family:var(--font);
+      color:var(--text);
+      background:
+        radial-gradient(1200px 600px at 20% 0%, rgba(115,255,59,.06), transparent 60%),
+        radial-gradient(900px 500px at 80% 30%, rgba(28,255,125,.05), transparent 55%),
+        var(--bg);
+      overflow:hidden;
+    }
+
+    .scroll{
+      scrollbar-width: thin;
+      scrollbar-color: rgba(115,255,59,.22) rgba(255,255,255,.05);
+    }
+    .scroll::-webkit-scrollbar{ width:10px; height:10px; }
+    .scroll::-webkit-scrollbar-track{ background: rgba(255,255,255,.05); border-radius: 999px; }
+    .scroll::-webkit-scrollbar-thumb{
+      background: rgba(115,255,59,.22);
+      border-radius: 999px;
+      border: 2px solid rgba(0,0,0,.35);
+    }
+
+    /* ---------- Top shell ---------- */
+    .shell{
+      max-width:1320px;
+      margin:0 auto;
+
+      height:100vh;
+      height:100svh;
+      height:100dvh;
+
+      padding-top:    calc(14px + var(--sat));
+      padding-right:  calc(14px + var(--sar));
+      padding-bottom: calc(14px + var(--sab));
+      padding-left:   calc(14px + var(--sal));
+
+      display:flex;
+      flex-direction:column;
+      gap:var(--gap);
+      min-height:0;
+    }
+
+    .topbar{
+      background:rgba(15,15,16,.86);
+      border:1px solid var(--stroke2);
+      border-radius:22px;
+      box-shadow:var(--shadow);
+      backdrop-filter: blur(10px);
+      padding:10px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      font-weight:900;
+      color:var(--accent);
+      user-select:none;
+      white-space:nowrap;
+    }
+    .brand small{
+      color:rgba(115,255,59,.78);
+      font-weight:800;
+      letter-spacing:.06em;
+      font-size:12px;
+    }
+    .tabs{
+      display:flex;
+      gap:8px;
+      background:rgba(255,255,255,.03);
+      border:1px solid rgba(255,255,255,.10);
+      padding:6px;
+      border-radius:999px;
+      flex:0 0 auto;
+    }
+    .tabBtn{
+      height:38px;
+      padding:0 14px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.02);
+      color:var(--muted);
+      font-weight:900;
+      cursor:pointer;
+    }
+    .tabBtn.active{
+      border-color:rgba(115,255,59,.35);
+      color:var(--accent);
+      background:rgba(115,255,59,.08);
+      box-shadow:0 0 0 3px rgba(115,255,59,.08) inset;
+    }
+    .mePill{
+      font-size:12px;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid var(--stroke);
+      color:var(--accent);
+      background:rgba(115,255,59,.06);
+      max-width: 320px;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+
+    /* ---------- Pages ---------- */
+    .page{ display:none; min-height:0; flex:1; }
+    .page.active{ display:flex; min-height:0; }
+
+    .card{
+      background:linear-gradient(180deg, rgba(255,255,255,.03), transparent 55%), var(--panel);
+      border:1px solid var(--stroke2);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+
+    .cardHeader{
+      padding:12px 14px;
+      border-bottom:1px solid var(--stroke2);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      min-height:54px;
+    }
+    .cardTitle{
+      font-size:12px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color:var(--muted);
+    }
+    .cardBody{ padding:var(--pad); min-height:0; }
+
+    .input{
+      width:100%;
+      height:var(--inputH);
+      border-radius:12px;
+      background:var(--panel2);
+      border:1px solid rgba(255,255,255,.09);
+      color:var(--text);
+      padding:0 12px;
+      outline:none;
+      min-width:0;
+    }
+    .input:focus{
+      border-color:rgba(115,255,59,.35);
+      box-shadow:0 0 0 3px rgba(115,255,59,.10);
+    }
+    .btn{
+      height:var(--btnH);
+      border-radius:12px;
+      border:1px solid rgba(115,255,59,.35);
+      background:rgba(115,255,59,.08);
+      color:var(--accent);
+      padding:0 14px;
+      cursor:pointer;
+      font-weight:800;
+      white-space:nowrap;
+      line-height:1;
+    }
+    .btn.secondary{
+      border-color:rgba(255,255,255,.14);
+      color:var(--text);
+      background:rgba(255,255,255,.04);
+    }
+    .btn:active{ transform:translateY(1px); }
+
+    .hint{ color:var(--muted); font-size:12px; line-height:1.4; }
+    .row{ display:grid; gap:10px; }
+    .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .actions{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+
+    /* ---------- Account page ---------- */
+    .accountWrap{
+      width:100%;
+      max-width:520px;
+      margin:0 auto;
+      display:flex;
+      flex-direction:column;
+      gap:var(--gap);
+      min-height:0;
+    }
+    .avatarRow{
+      display:flex;
+      align-items:center;
+      gap:12px;
+    }
+    .avatarPreview{
+      width:64px;
+      height:64px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.04);
+      overflow:hidden;
+      flex:0 0 auto;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:var(--muted);
+      font-weight:900;
+    }
+    .avatarPreview img{
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      display:block;
+    }
+    .fileBtn{
+      position:relative;
+      overflow:hidden;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      padding:0 12px;
+      height:var(--btnH);
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.03);
+      color:var(--muted);
+      cursor:pointer;
+      white-space:nowrap;
+    }
+    .fileBtn input[type="file"]{ position:absolute; inset:0; opacity:0; cursor:pointer; }
+
+    /* ---------- Chats page ---------- */
+    .chatsLayout{
+      width:100%;
+      display:grid;
+      grid-template-columns:360px 1fr;
+      gap:var(--gap);
+      min-height:0;
+    }
+
+    .sidebar{
+      display:flex;
+      flex-direction:column;
+      gap:var(--gap);
+      min-height:0;
+    }
+
+    .list{ display:flex; flex-direction:column; gap:8px; }
+    .item{
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.07);
+      background:rgba(255,255,255,.02);
+      cursor:pointer;
+    }
+    .item:hover{ border-color:rgba(115,255,59,.20); background:rgba(115,255,59,.04); }
+    .item small{ color:var(--muted); }
+
+    .searchRow{
+      display:grid;
+      grid-template-columns: 1fr 92px;
+      gap:10px;
+      align-items:center;
+    }
+
+    .dialogsBody{ flex:1; min-height:0; overflow:auto; }
+
+    .chat{
+      display:flex;
+      flex-direction:column;
+      min-height:0;
+    }
+    .chatHeader{
+      padding:12px 14px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      border-bottom:1px solid var(--stroke2);
+      min-height:58px;
+    }
+    .chatLeft{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      min-width:0;
+    }
+    .backBtn{
+      display:none;
+      height:38px;
+      padding:0 12px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.03);
+      color:var(--text);
+      cursor:pointer;
+      font-weight:900;
+      flex:0 0 auto;
+    }
+    .chatTitle{ font-size:14px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:52vw; }
+    .typingText{ font-size:12px; color:var(--muted); min-height:16px; }
+
+    .chatMeta{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      color:var(--muted);
+      font-size:12px;
+      flex:0 0 auto;
+    }
+    .dot{ width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,.18); }
+    .dot.online{ background:var(--accent2); box-shadow:0 0 0 3px rgba(28,255,125,.12); }
+
+    .messages{
+      flex:1;
+      min-height:0;
+      overflow:auto;
+      padding:14px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .loading{
+      align-self:center;
+      color:var(--muted);
+      font-size:12px;
+      padding:10px 12px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.07);
+      background:rgba(255,255,255,.03);
+    }
+
+    .msg{
+      max-width:76%;
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.07);
+      background:rgba(255,255,255,.03);
+      line-height:1.35;
+      word-break:break-word;
+    }
+    .msg.me{
+      margin-left:auto;
+      border-color:rgba(115,255,59,.22);
+      background:rgba(115,255,59,.06);
+    }
+    .msg small{ color:var(--muted); display:block; margin-top:6px; font-size:11px; }
+    .readmark{ opacity:.9; }
+
+    .attachment img,.attachment video{
+      display:block;
+      margin-top:8px;
+      max-width:420px;
+      width:100%;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.10);
+    }
+
+    .composer{
+      padding:12px;
+      border-top:1px solid var(--stroke2);
+      display:grid;
+      grid-template-columns: 1fr auto;
+      gap:10px;
+      align-items:center;
+    }
+    .composerLeft{
+      display:grid;
+      grid-template-columns: 1fr 120px;
+      gap:10px;
+      align-items:center;
+      min-width:0;
+    }
+
+    .uploadBar{
+      display:none;
+      grid-column:1 / -1;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.08);
+      background:rgba(255,255,255,.03);
+    }
+    .uploadTop{
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      font-size:12px;
+      color:var(--muted);
+      margin-bottom:8px;
+    }
+    .progressTrack{
+      width:100%;
+      height:10px;
+      border-radius:999px;
+      background:rgba(255,255,255,.06);
+      overflow:hidden;
+      border:1px solid rgba(255,255,255,.06);
+    }
+    .progressFill{
+      height:100%;
+      width:0%;
+      background:linear-gradient(90deg, rgba(115,255,59,.55), rgba(28,255,125,.65));
+      border-radius:999px;
+      transition: width .15s linear;
+    }
+
+    /* ✅ NEW badge */
+    .unreadBadge{
+      margin-left:auto;
+      font-size:11px;
+      font-weight:900;
+      padding:4px 8px;
+      border-radius:999px;
+      border:1px solid rgba(115,255,59,.35);
+      background:rgba(115,255,59,.10);
+      color:var(--accent);
+    }
+
+    /* ---------- Mobile: two-screen chat (list <-> dialog) ---------- */
+    @media (max-width:980px){
+      body{ overflow:auto; }
+
+      .shell{
+        padding-bottom: calc(14px + var(--sab));
+        overflow:hidden;
+      }
+
+      .chatsLayout{
+        grid-template-columns:1fr;
+      }
+
+      .sidebar{
+        display:flex;
+      }
+
+      .chat{
+        position:fixed;
+        inset: calc(64px + var(--sat)) calc(14px + var(--sar)) calc(14px + var(--sab)) calc(14px + var(--sal));
+        z-index:40;
+        border-radius:18px;
+        overflow:hidden;
+        display:none;
+      }
+      .chats-open-chat .chat{ display:flex; }
+      .chats-open-chat .sidebar{ display:none; }
+
+      .backBtn{ display:inline-flex; align-items:center; justify-content:center; }
+      .chatTitle{ max-width: 52vw; }
+
+      .composerLeft{ grid-template-columns:1fr 110px; }
+      .msg{ max-width:92%; }
+    }
+
+    @media (max-width:520px){
+      .row2{ grid-template-columns:1fr; }
+      .actions{ grid-template-columns:1fr; }
+      .searchRow{ grid-template-columns:1fr 92px; }
+      .composer{ grid-template-columns:1fr; }
+      .composerLeft{ grid-template-columns:1fr 110px; }
+    }
   </style>
 </head>
+
 <body>
-  <div class="top">
-    <div class="brand">Чебурнет</div>
-    <div id="me"></div>
-  </div>
+  <div class="shell">
 
-  <div class="wrap">
-    <div class="side">
-      <div class="card">
-        <div><b>Auth</b></div>
-        <div class="row" style="margin-top:8px;">
-          <input class="grow" id="u" placeholder="username">
-          <input class="grow" id="p" placeholder="password" type="password">
-        </div>
-        <div class="row" style="margin-top:8px;">
-          <button onclick="register()">Register</button>
-          <button onclick="login()">Login</button>
-        </div>
+    <div class="topbar">
+      <div class="brand">Чебур<span style="opacity:.9">.</span>net <small>MVP</small></div>
+
+      <div class="tabs" role="tablist" aria-label="Main tabs">
+        <button class="tabBtn active" id="tabChats" type="button" aria-controls="pageChats" aria-selected="true">Чаты</button>
+        <button class="tabBtn" id="tabAccount" type="button" aria-controls="pageAccount" aria-selected="false">Аккаунт</button>
       </div>
 
-      <div class="card" style="margin-top:12px;">
-        <div><b>Search user</b></div>
-        <div class="row" style="margin-top:8px;">
-          <input class="grow" id="q" placeholder="type username">
-          <button onclick="search()">Find</button>
-        </div>
-        <div id="searchRes"></div>
-      </div>
-
-      <div class="card" style="margin-top:12px;">
-        <div><b>Dialogs</b></div>
-        <button style="margin-top:8px;" onclick="loadDialogs()">Reload</button>
-        <div id="dialogs"></div>
-      </div>
+      <div class="mePill" id="mePill"><small>not logged in</small></div>
     </div>
 
-    <div class="main">
-      <div class="card">
-        <div class="chatbar">
-          <b>Chat:</b>
-          <span id="chatTitle">—</span>
-          <span class="dot" id="onlineDot" title="online"></span>
-          <span class="typing" id="typingText"></span>
-        </div>
-      </div>
+    <section class="page active" id="pageChats" role="tabpanel" aria-labelledby="tabChats">
+      <div class="chatsLayout" id="chatsLayout">
 
-      <div class="msgs" id="msgs"></div>
+        <aside class="sidebar scroll">
 
-      <div class="card">
-        <div class="row">
-          <input class="grow" id="text" placeholder="Message..." oninput="onTyping()">
-          <input type="file" id="file">
-          <button onclick="send()">Send</button>
-        </div>
-        <small>Текст + файл. Превью image/video будет прямо в чате.</small>
+          <section class="card">
+            <div class="cardHeader">
+              <div class="cardTitle">Поиск пользователя</div>
+            </div>
+            <div class="cardBody">
+              <div class="searchRow">
+                <input id="q" class="input" placeholder="username…" />
+                <button class="btn" id="btnFind">Find</button>
+              </div>
+              <div id="searchRes" class="list scroll" style="margin-top:10px; max-height:240px;"></div>
+            </div>
+          </section>
+
+          <section class="card" style="flex:1; min-height:0;">
+            <div class="cardHeader">
+              <div class="cardTitle">Диалоги</div>
+              <button class="btn secondary" id="btnReloadDialogs" type="button">Reload</button>
+            </div>
+            <div class="cardBody dialogsBody scroll">
+              <div id="dialogs" class="list"></div>
+            </div>
+          </section>
+
+        </aside>
+
+        <main class="card chat" id="chatPanel">
+          <div class="chatHeader">
+            <div class="chatLeft">
+              <button class="backBtn" id="btnBack" type="button">←</button>
+              <div style="min-width:0">
+                <div class="chatTitle" id="chatTitle">Chat: —</div>
+                <div class="typingText" id="typingText"></div>
+              </div>
+            </div>
+            <div class="chatMeta">
+              <span class="dot" id="onlineDot"></span>
+              <span id="onlineText">—</span>
+            </div>
+          </div>
+
+          <div class="messages scroll" id="msgs">
+            <div class="loading">Выбери диалог</div>
+          </div>
+
+          <div class="composer">
+            <div class="uploadBar" id="uploadBar">
+              <div class="uploadTop">
+                <div id="uploadName">Uploading…</div>
+                <div id="uploadPct">0%</div>
+              </div>
+              <div class="progressTrack">
+                <div class="progressFill" id="uploadFill"></div>
+              </div>
+            </div>
+
+            <div class="composerLeft">
+              <input id="text" class="input" placeholder="Сообщение…" />
+              <label class="fileBtn">
+                📎 File
+                <input id="file" type="file" />
+              </label>
+            </div>
+            <button class="btn" id="btnSend" type="button">Send</button>
+          </div>
+        </main>
+
       </div>
-    </div>
+    </section>
+
+    <section class="page" id="pageAccount" role="tabpanel" aria-labelledby="tabAccount">
+      <div class="accountWrap scroll" style="overflow:auto;">
+        <section class="card">
+          <div class="cardHeader">
+            <div class="cardTitle">Аккаунт</div>
+            <div class="mePill" id="mePill2"><small>not logged in</small></div>
+          </div>
+
+          <div class="cardBody">
+            <div class="row2">
+              <input id="u" class="input" placeholder="username" />
+              <input id="p" class="input" placeholder="password" type="password" />
+            </div>
+
+            <div style="height:10px"></div>
+
+            <div class="row2">
+              <select id="birthYear" class="input">
+                <option value="">Год рождения (не выбран)</option>
+              </select>
+
+              <div class="avatarRow">
+                <div class="avatarPreview" id="avatarPreview">👤</div>
+                <label class="fileBtn" style="height:var(--inputH);">
+                  🖼️ Фото
+                  <input id="avatar" type="file" accept="image/*" />
+                </label>
+              </div>
+            </div>
+
+            <div class="hint" style="margin-top:10px">
+              Регистрация: username + password + (опционально) год рождения + фото.
+            </div>
+
+            <div class="actions">
+              <button class="btn" id="btnRegister" type="button">Register</button>
+              <button class="btn secondary" id="btnLogin" type="button">Login</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
   </div>
 
-<script src="/static/app.js?v=1001"></script>
+  <script>
+    (() => {
+      const tabChats = document.getElementById('tabChats');
+      const tabAccount = document.getElementById('tabAccount');
+      const pageChats = document.getElementById('pageChats');
+      const pageAccount = document.getElementById('pageAccount');
+
+      const chatsLayout = document.getElementById('chatsLayout');
+      const btnBack = document.getElementById('btnBack');
+
+      function setTab(name){
+        const isChats = name === 'chats';
+
+        tabChats.classList.toggle('active', isChats);
+        tabAccount.classList.toggle('active', !isChats);
+        tabChats.setAttribute('aria-selected', isChats ? 'true' : 'false');
+        tabAccount.setAttribute('aria-selected', !isChats ? 'true' : 'false');
+
+        pageChats.classList.toggle('active', isChats);
+        pageAccount.classList.toggle('active', !isChats);
+
+        if (!isChats) {
+          chatsLayout.classList.remove('chats-open-chat');
+        }
+      }
+
+      function showChatMobile(){
+        chatsLayout.classList.add('chats-open-chat');
+      }
+
+      function showListMobile(){
+        chatsLayout.classList.remove('chats-open-chat');
+      }
+
+      tabChats.addEventListener('click', ()=>setTab('chats'));
+      tabAccount.addEventListener('click', ()=>setTab('account'));
+      btnBack.addEventListener('click', showListMobile);
+
+      window.ui = {
+        setTab,
+        showChatMobile,
+        showListMobile,
+      };
+
+      const by = document.getElementById('birthYear');
+      const now = new Date().getFullYear();
+      for (let y = now - 10; y >= now - 90; y--){
+        const opt = document.createElement('option');
+        opt.value = String(y);
+        opt.textContent = String(y);
+        by.appendChild(opt);
+      }
+
+      const avatar = document.getElementById('avatar');
+      const preview = document.getElementById('avatarPreview');
+      avatar.addEventListener('change', () => {
+        const f = avatar.files && avatar.files[0];
+        if (!f) { preview.innerHTML = '👤'; return; }
+        const url = URL.createObjectURL(f);
+        preview.innerHTML = `<img src="${url}" alt="avatar">`;
+      });
+    })();
+  </script>
+
+  <script src="/static/app.js?v=2002"></script>
 </body>
 </html>

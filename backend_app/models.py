@@ -15,7 +15,17 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     username = Column(String(64), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
+
+    # профиль
+    birth_year = Column(Integer, nullable=True)
+
+    # аватар — ссылка на files.id
+    avatar_file_id = Column(Integer, ForeignKey("files.id"), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # ✅ Явно указываем какой FK используется (иначе ambiguous)
+    avatar = relationship("File", foreign_keys=[avatar_file_id], uselist=False)
 
 
 class DMChat(Base):
@@ -40,21 +50,25 @@ class Message(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     chat = relationship("DMChat")
-    sender = relationship("User")
+    sender = relationship("User", foreign_keys=[sender_id])
 
 
 class File(Base):
     __tablename__ = "files"
 
     id = Column(Integer, primary_key=True)
+
+    # владелец файла — ссылка на users.id
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
     original_name = Column(String(255), nullable=False)
     mime = Column(String(128), nullable=False)
     size = Column(Integer, nullable=False)
     path = Column(String(512), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    owner = relationship("User")
+    # ✅ ВАЖНО: явно указываем FK owner_id, иначе ambiguous
+    owner = relationship("User", foreign_keys=[owner_id])
 
 
 class MessageAttachment(Base):
@@ -77,4 +91,4 @@ class DMRead(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     chat = relationship("DMChat")
-    user = relationship("User")
+    user = relationship("User", foreign_keys=[user_id])

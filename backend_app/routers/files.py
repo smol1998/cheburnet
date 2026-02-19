@@ -1,6 +1,6 @@
 import os
 import uuid
-from fastapi import APIRouter, Depends, UploadFile, File as UpFile, HTTPException, Query
+from fastapi import APIRouter, Depends, UploadFile, File as UpFile, HTTPException, Query, Header
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -13,9 +13,8 @@ router = APIRouter()
 
 ALLOWED_PREFIXES = ("image/", "video/", "application/", "text/")
 
+
 def get_max_upload_bytes() -> int:
-    # По умолчанию БЕЗ лимита (0 = unlimited)
-    # Можно задать в env: MAX_UPLOAD_MB=200
     mb = getattr(settings, "max_upload_mb", None)
     if mb is None:
         mb = int(os.getenv("MAX_UPLOAD_MB", "0"))
@@ -76,9 +75,18 @@ def user_can_access_file(db: Session, user_id: int, file_id: int) -> bool:
     f = db.get(models.File, file_id)
     if not f:
         return False
+
+    # владелец всегда может
     if f.owner_id == user_id:
         return True
 
+    # аватар другого пользователя (разрешим видеть всем авторизованным)
+    # (если хочешь приватно — убери этот блок)
+    u = db.query(models.User).filter(models.User.avatar_file_id == file_id).first()
+    if u is not None:
+        return True
+
+    # иначе проверяем, прикреплён ли файл в чате, где участвует user
     q = (
         db.query(models.DMChat.id)
         .join(models.Message, models.Message.chat_id == models.DMChat.id)
@@ -94,17 +102,32 @@ def user_can_access_file(db: Session, user_id: int, file_id: int) -> bool:
 def download(
     file_id: int,
     token: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
 ):
     """
-    Вариант 1: обычный (через Authorization header) — работает для fetch/XHR.
-    Вариант 2: для <img>/<video>/<a> можно передать ?token=... (header там не поставить).
+    Вариант 1: Authorization: Bearer <token> (fetch/XHR)
+    Вариант 2: ?token=... (для <img>/<video>/<a>)
     """
+    # 1) авторизация через query token
+    user = None
     if token:
-        # если token передали — авторизуемся по нему вручную
         try:
             payload = decode_token(token)
+            user_id = int(payload.get("sub"))
+        except Exception:
+            raise HTTPException(401, "Invalid token")
+        user = db.get(models.User, user_id)
+        if not user:
+            raise HTTPException(401, "Invalid token")
+
+    # 2) авторизация через header
+    if user is None:
+        if not authorization or not authorization.lower().startswith("bearer "):
+            raise HTTPException(401, "Missing token")
+        t = authorization.split(" ", 1)[1].strip()
+        try:
+            payload = decode_token(t)
             user_id = int(payload.get("sub"))
         except Exception:
             raise HTTPException(401, "Invalid token")
