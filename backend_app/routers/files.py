@@ -1,11 +1,10 @@
 import os
-import uuid
-
-from fastapi import APIRouter, Depends, UploadFile, File as UpFile, HTTPException, Query, Header, Request
-from fastapi.responses import FileResponse, Response
+from io import BytesIO
+from fastapi import APIRouter, Depends, UploadFile, File as UpFile, HTTPException, Query, Header
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from backend_app.deps import get_db, get_current_user, extract_token
+from backend_app.deps import get_db, get_current_user
 from backend_app.config import settings
 from backend_app import models
 from backend_app.security import decode_token
@@ -24,44 +23,6 @@ def get_max_upload_bytes() -> int:
     return mb * 1024 * 1024
 
 
-def _user_id_from_payload(payload) -> int | None:
-    if isinstance(payload, int):
-        return payload
-    if isinstance(payload, dict):
-        sub = payload.get("sub")
-        if sub is None:
-            return None
-        try:
-            return int(sub)
-        except Exception:
-            return None
-    return None
-
-
-def _get_user_from_request(request: Request, db: Session) -> models.User:
-    """
-    Унифицированная авторизация для /files:
-    - Authorization: Bearer <token>
-    - или ?token=<token> (для <img>, <video>, <a>)
-    """
-    token = extract_token(request, request.headers.get("authorization"))
-    if not token:
-        raise HTTPException(401, "Missing token")
-    try:
-        payload = decode_token(token)
-    except Exception:
-        raise HTTPException(401, "Invalid token")
-
-    uid = _user_id_from_payload(payload)
-    if not uid:
-        raise HTTPException(401, "Invalid token")
-
-    user = db.get(models.User, uid)
-    if not user:
-        raise HTTPException(401, "Invalid token")
-    return user
-
-
 @router.post("/upload")
 async def upload(
     file: UploadFile = UpFile(...),
@@ -73,20 +34,29 @@ async def upload(
 
     max_bytes = get_max_upload_bytes()
 
-    # ✅ Railway Free: сохраняем в Postgres
-    data = await file.read()
-    size = len(data)
+    chunks: list[bytes] = []
+    size = 0
 
-    if max_bytes and size > max_bytes:
-        raise HTTPException(400, f"File too large (max {max_bytes // (1024*1024)}MB)")
+    while True:
+        chunk = await file.read(1024 * 1024)  # 1MB
+        if not chunk:
+            break
+        size += len(chunk)
+
+        if max_bytes and size > max_bytes:
+            raise HTTPException(400, f"File too large (max {max_bytes // (1024*1024)}MB)")
+
+        chunks.append(chunk)
+
+    data = b"".join(chunks)
 
     rec = models.File(
         owner_id=user.id,
         original_name=file.filename or "file",
         mime=file.content_type,
         size=size,
-        path=None,
         data=data,
+        path=None,  # больше не пишем на диск
     )
     db.add(rec)
     db.commit()
@@ -100,14 +70,16 @@ def user_can_access_file(db: Session, user_id: int, file_id: int) -> bool:
     if not f:
         return False
 
+    # владелец всегда может
     if f.owner_id == user_id:
         return True
 
-    # разрешим видеть аватар другим авторизованным
+    # аватар другого пользователя (разрешим видеть всем авторизованным)
     u = db.query(models.User).filter(models.User.avatar_file_id == file_id).first()
     if u is not None:
         return True
 
+    # иначе проверяем, прикреплён ли файл в чате, где участвует user
     q = (
         db.query(models.DMChat.id)
         .join(models.Message, models.Message.chat_id == models.DMChat.id)
@@ -122,10 +94,40 @@ def user_can_access_file(db: Session, user_id: int, file_id: int) -> bool:
 @router.get("/{file_id}")
 def download(
     file_id: int,
-    request: Request,
+    token: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _get_user_from_request(request, db)
+    """
+    Вариант 1: Authorization: Bearer <token> (fetch/XHR)
+    Вариант 2: ?token=... (для <img>/<video>/<a>)
+    """
+    # 1) авторизация через query token
+    user = None
+    if token:
+        try:
+            payload = decode_token(token)
+            # decode_token у тебя может вернуть int или dict
+            user_id = int(payload.get("sub")) if isinstance(payload, dict) else int(payload)
+        except Exception:
+            raise HTTPException(401, "Invalid token")
+        user = db.get(models.User, user_id)
+        if not user:
+            raise HTTPException(401, "Invalid token")
+
+    # 2) авторизация через header
+    if user is None:
+        if not authorization or not authorization.lower().startswith("bearer "):
+            raise HTTPException(401, "Missing token")
+        t = authorization.split(" ", 1)[1].strip()
+        try:
+            payload = decode_token(t)
+            user_id = int(payload.get("sub")) if isinstance(payload, dict) else int(payload)
+        except Exception:
+            raise HTTPException(401, "Invalid token")
+        user = db.get(models.User, user_id)
+        if not user:
+            raise HTTPException(401, "Invalid token")
 
     rec = db.get(models.File, file_id)
     if not rec:
@@ -134,16 +136,9 @@ def download(
     if not user_can_access_file(db, user.id, file_id):
         raise HTTPException(403, "Forbidden")
 
-    # ✅ если есть data в БД — отдаём из БД (Railway Free)
-    if getattr(rec, "data", None):
-        headers = {
-            # чтобы браузер мог показывать img/video inline
-            "Content-Disposition": f'inline; filename="{rec.original_name}"'
-        }
-        return Response(content=rec.data, media_type=rec.mime, headers=headers)
-
-    # fallback: старый режим (если у тебя где-то всё же есть диск)
-    if rec.path and os.path.exists(rec.path):
-        return FileResponse(rec.path, media_type=rec.mime, filename=rec.original_name)
-
-    raise HTTPException(404, "File content missing")
+    bio = BytesIO(rec.data or b"")
+    headers = {
+        # чтобы браузер корректно сохранял имя
+        "Content-Disposition": f'inline; filename="{rec.original_name}"'
+    }
+    return StreamingResponse(bio, media_type=rec.mime, headers=headers)

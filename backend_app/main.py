@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend_app import models
 from backend_app.db import engine
 from backend_app.models import Base
 from backend_app.ws import router as ws_router
