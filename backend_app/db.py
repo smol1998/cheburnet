@@ -1,18 +1,29 @@
-from pathlib import Path
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from backend_app.config import settings
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./mvp.db")
+
+# Railway fix
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgresql://",
+        "postgresql+psycopg2://",
+        1
+    )
 
 connect_args = {}
-if settings.database_url.startswith("sqlite"):
+if DATABASE_URL.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
 
-    # гарантируем, что директория под sqlite существует
-    if settings.database_url.startswith("sqlite:////"):
-        db_file = settings.database_url.replace("sqlite:////", "/")
-        Path(db_file).parent.mkdir(parents=True, exist_ok=True)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    connect_args=connect_args,
+)
 
-engine = create_engine(settings.database_url, connect_args=connect_args, future=True)
-
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
