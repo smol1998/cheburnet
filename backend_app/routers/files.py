@@ -1,5 +1,7 @@
 import os
 import uuid
+from typing import Any, Optional
+
 from fastapi import APIRouter, Depends, UploadFile, File as UpFile, HTTPException, Query, Header
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -81,7 +83,6 @@ def user_can_access_file(db: Session, user_id: int, file_id: int) -> bool:
         return True
 
     # аватар другого пользователя (разрешим видеть всем авторизованным)
-    # (если хочешь приватно — убери этот блок)
     u = db.query(models.User).filter(models.User.avatar_file_id == file_id).first()
     if u is not None:
         return True
@@ -98,6 +99,41 @@ def user_can_access_file(db: Session, user_id: int, file_id: int) -> bool:
     return db.query(q.exists()).scalar() is True
 
 
+def _user_id_from_payload(payload: Any) -> Optional[int]:
+    """
+    decode_token может возвращать:
+    - int user_id
+    - dict {"sub": "..."}
+    """
+    if isinstance(payload, int):
+        return payload
+    if isinstance(payload, dict):
+        sub = payload.get("sub")
+        if sub is None:
+            return None
+        try:
+            return int(sub)
+        except Exception:
+            return None
+    return None
+
+
+def _auth_user_from_token(db: Session, token: str) -> models.User:
+    try:
+        payload = decode_token(token)
+    except Exception:
+        raise HTTPException(401, "Invalid token")
+
+    user_id = _user_id_from_payload(payload)
+    if not user_id:
+        raise HTTPException(401, "Invalid token")
+
+    user = db.get(models.User, user_id)
+    if not user:
+        raise HTTPException(401, "Invalid token")
+    return user
+
+
 @router.get("/{file_id}")
 def download(
     file_id: int,
@@ -109,31 +145,18 @@ def download(
     Вариант 1: Authorization: Bearer <token> (fetch/XHR)
     Вариант 2: ?token=... (для <img>/<video>/<a>)
     """
+    user: Optional[models.User] = None
+
     # 1) авторизация через query token
-    user = None
-    if token:
-        try:
-            payload = decode_token(token)
-            user_id = int(payload.get("sub"))
-        except Exception:
-            raise HTTPException(401, "Invalid token")
-        user = db.get(models.User, user_id)
-        if not user:
-            raise HTTPException(401, "Invalid token")
+    if token and token.strip():
+        user = _auth_user_from_token(db, token.strip())
 
     # 2) авторизация через header
     if user is None:
         if not authorization or not authorization.lower().startswith("bearer "):
             raise HTTPException(401, "Missing token")
         t = authorization.split(" ", 1)[1].strip()
-        try:
-            payload = decode_token(t)
-            user_id = int(payload.get("sub"))
-        except Exception:
-            raise HTTPException(401, "Invalid token")
-        user = db.get(models.User, user_id)
-        if not user:
-            raise HTTPException(401, "Invalid token")
+        user = _auth_user_from_token(db, t)
 
     rec = db.get(models.File, file_id)
     if not rec:
