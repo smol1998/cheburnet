@@ -101,6 +101,9 @@
       user-select:none;
       white-space:nowrap;
     }
+    /* ✅ NEW: чтобы "Чебур.net" не разбивалось gap-ом */
+    .brandText{ display:inline-block; }
+
     .tabs{
       display:flex;
       gap:8px;
@@ -473,7 +476,6 @@
       font-size:18px;
       overflow:hidden;
     }
-    /* ✅ thumb */
     .sfIcon img{
       width:100%;
       height:100%;
@@ -593,7 +595,8 @@
   <div class="shell">
 
     <div class="topbar">
-      <div class="brand">Чебур<span style="opacity:.9">.</span>net</div>
+      <!-- ✅ FIX: бренд внутри одного элемента, чтобы gap не разрывал "Чебур.net" -->
+      <div class="brand"><span class="brandText">Чебур<span style="opacity:.9">.</span>net</span></div>
 
       <div class="tabs" role="tablist" aria-label="Main tabs">
         <button class="tabBtn" id="tabChats" type="button" aria-controls="pageChats" aria-selected="false">Чаты</button>
