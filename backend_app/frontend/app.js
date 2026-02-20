@@ -41,13 +41,6 @@ let dialogsReloadInFlight = false;
 // selected file preview (URL.createObjectURL)
 let selectedFileObjectUrl = null;
 
-// upload ring state (XHR cancel)
-let uploadXHR = null;
-let uploadInProgress = false;
-
-// auth mode state
-let authMode = "login"; // default
-
 /* =========================
    DOM
    ========================= */
@@ -88,6 +81,11 @@ const btnFind = document.getElementById("btnFind");
 const btnReloadDialogs = document.getElementById("btnReloadDialogs");
 const btnSend = document.getElementById("btnSend");
 
+const uploadBar = document.getElementById("uploadBar");
+const uploadName = document.getElementById("uploadName");
+const uploadPct = document.getElementById("uploadPct");
+const uploadFill = document.getElementById("uploadFill");
+
 const btnBack = document.getElementById("btnBack");
 
 // tabs/pages layout (важно для фикса read/new)
@@ -100,11 +98,6 @@ const sfIcon = document.getElementById("sfIcon");
 const sfName = document.getElementById("sfName");
 const sfSub = document.getElementById("sfSub");
 const sfRemove = document.getElementById("sfRemove");
-
-// ✅ Auth mode UI
-const authModeLogin = document.getElementById("authModeLogin");
-const authModeRegister = document.getElementById("authModeRegister");
-const registerFields = document.getElementById("registerFields");
 
 /* =========================
    Helpers
@@ -140,6 +133,10 @@ function hasDialogRowInDOM(chatId) {
   return !!document.querySelector(`.item[data-chatid="${cid}"]`);
 }
 
+/**
+ * Делает URL до файла с добавлением ?token=...
+ * и опциональным cache-bust параметром v=...
+ */
 function fileUrl(pathOrUrl, v = null) {
   if (!pathOrUrl) return "";
   const sep1 = pathOrUrl.includes("?") ? "&" : "?";
@@ -163,48 +160,7 @@ function ensureAvatarPath(uobj) {
 }
 
 /* =========================
-   ✅ Auth mode UX + A11y
-   ========================= */
-
-function setAuthMode(mode) {
-  authMode = mode === "register" ? "register" : "login";
-
-  if (registerFields) {
-    registerFields.classList.toggle("open", authMode === "register");
-    registerFields.setAttribute("aria-hidden", authMode === "register" ? "false" : "true");
-  }
-
-  if (btnLogin) btnLogin.style.display = authMode === "login" ? "inline-flex" : "none";
-  if (btnRegister) btnRegister.style.display = authMode === "register" ? "inline-flex" : "none";
-
-  if (authModeLogin) {
-    authModeLogin.classList.toggle("active", authMode === "login");
-    authModeLogin.setAttribute("aria-selected", authMode === "login" ? "true" : "false");
-  }
-  if (authModeRegister) {
-    authModeRegister.classList.toggle("active", authMode === "register");
-    authModeRegister.setAttribute("aria-selected", authMode === "register" ? "true" : "false");
-  }
-
-  // в login режиме чистим регистрационные поля
-  if (authMode === "login") {
-    if (birthYear) birthYear.value = "";
-    if (avatarInput) avatarInput.value = "";
-    const prev = document.getElementById("avatarPreview");
-    if (prev) prev.innerHTML = "👤";
-  }
-
-  // фокус (приятно на мобиле/ПК)
-  setTimeout(() => {
-    try {
-      if (u && !u.value) u.focus();
-      else if (p) p.focus();
-    } catch (_) {}
-  }, 0);
-}
-
-/* =========================
-   ✅ VISIBILITY FIX
+   ✅ VISIBILITY FIX (важно!)
    ========================= */
 
 function isChatsTabActive() {
@@ -249,7 +205,7 @@ function scheduleDialogsReload(reason = "") {
 }
 
 /* =========================
-   ✅ Selected file preview + ring progress
+   ✅ Selected file preview
    ========================= */
 
 function fmtBytes(n) {
@@ -262,42 +218,6 @@ function fmtBytes(n) {
   return `${x.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-function getRingCircle() {
-  return sfRemove ? sfRemove.querySelector(".sfProgressBar") : null;
-}
-
-function setProgressRing(percent) {
-  const circle = getRingCircle();
-  if (!circle) return;
-
-  const pct = Math.max(0, Math.min(100, Number(percent || 0)));
-  const C = 100.53; // circumference for r=16
-  const offset = C - (C * pct / 100);
-  circle.style.strokeDashoffset = String(offset);
-}
-
-function resetProgressRing() {
-  setProgressRing(0);
-  if (sfRemove) {
-    sfRemove.classList.remove("uploading");
-    sfRemove.classList.remove("done");
-  }
-}
-
-function startRingAnim() {
-  resetProgressRing();
-  if (sfRemove) sfRemove.classList.add("uploading");
-}
-
-function doneRingAnim() {
-  setProgressRing(100);
-  if (sfRemove) {
-    sfRemove.classList.remove("uploading");
-    sfRemove.classList.add("done");
-    setTimeout(() => sfRemove && sfRemove.classList.remove("done"), 320);
-  }
-}
-
 function revokeSelectedFileObjectUrl() {
   if (selectedFileObjectUrl) {
     try { URL.revokeObjectURL(selectedFileObjectUrl); } catch (_) {}
@@ -307,7 +227,6 @@ function revokeSelectedFileObjectUrl() {
 
 function clearSelectedFileUI({ keepInput = false } = {}) {
   revokeSelectedFileObjectUrl();
-  resetProgressRing();
 
   if (!keepInput && file) file.value = "";
 
@@ -321,23 +240,18 @@ function showSelectedFileUI(f) {
   if (!selectedFile || !sfIcon || !sfName || !sfSub) return;
   if (!f) { clearSelectedFileUI(); return; }
 
-  resetProgressRing();
+  sfName.textContent = f.name || "file";
+  sfSub.textContent = `${fmtBytes(f.size)} • ${f.type || "file"}`;
 
-  const type = String(f.type || "");
-  const isImg = type.startsWith("image/");
-  const isVid = type.startsWith("video/");
-
-  // имя файла не показываем (защита от длинных имен)
-  sfName.textContent = isVid ? "Видео" : isImg ? "Фото" : "Файл";
-  sfSub.textContent = `${fmtBytes(f.size)}${type ? " • " + type : ""}`;
-
+  // preview/icon
   sfIcon.textContent = "📎";
   revokeSelectedFileObjectUrl();
 
-  if (isImg) {
+  if (f.type && f.type.startsWith("image/")) {
     selectedFileObjectUrl = URL.createObjectURL(f);
     sfIcon.innerHTML = `<img src="${selectedFileObjectUrl}" alt="preview">`;
-  } else if (isVid) {
+  } else if (f.type && f.type.startsWith("video/")) {
+    // Лёгкий визуал (без тяжёлого thumbnail)
     sfIcon.textContent = "🎥";
   } else {
     sfIcon.textContent = "📎";
@@ -402,8 +316,6 @@ function disableSend(disabled) {
 function setAccountMode(loggedIn) {
   if (authBox) authBox.style.display = loggedIn ? "none" : "block";
   if (profileBox) profileBox.style.display = loggedIn ? "block" : "none";
-
-  if (!loggedIn) setAuthMode("login");
 }
 
 function paintProfile() {
@@ -465,8 +377,10 @@ function setUnread(chatId, val) {
   unreadByChatId.set(cid, !!val);
   savePersistedUnread();
 
+  // если диалог уже есть в DOM — просто рисуем бейдж
   paintUnreadBadge(cid, !!val);
 
+  // если диалога нет в DOM — грузим список, чтобы он появился
   if (!!val && !hasDialogRowInDOM(cid)) {
     scheduleDialogsReload("unread:missing_dialog_row");
   }
@@ -508,12 +422,35 @@ function restoreDraftForChat(chatId) {
 }
 
 /* =========================
+   Upload progress helpers
+   ========================= */
+
+function showUpload(name) {
+  if (!uploadBar) return;
+  uploadBar.style.display = "block";
+  if (uploadName) uploadName.textContent = name ? `Uploading: ${name}` : "Uploading…";
+  if (uploadPct) uploadPct.textContent = "0%";
+  if (uploadFill) uploadFill.style.width = "0%";
+  disableSend(true);
+}
+
+function setUploadProgress(pct) {
+  const v = Math.max(0, Math.min(100, pct || 0));
+  if (uploadPct) uploadPct.textContent = `${v}%`;
+  if (uploadFill) uploadFill.style.width = `${v}%`;
+}
+
+function hideUpload() {
+  if (!uploadBar) return;
+  uploadBar.style.display = "none";
+  disableSend(false);
+}
+
+/* =========================
    Auth / Me
    ========================= */
 
 async function register() {
-  if (authMode !== "register") return;
-
   const username = (u.value || "").trim();
   const password = (p.value || "").trim();
   const by = birthYear ? (birthYear.value || "").trim() : "";
@@ -542,16 +479,12 @@ async function register() {
     if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
   } else {
     alert("Registered. Now login.");
-    setAuthMode("login");
   }
 }
 
 async function login() {
-  if (authMode !== "login") return;
-
   const username = (u.value || "").trim();
   const password = (p.value || "").trim();
-  if (!username || !password) return alert("Введите username и password");
 
   const r = await fetch(API + "/auth/login", {
     method: "POST",
@@ -600,8 +533,8 @@ function logout() {
   setAccountMode(false);
   renderMiniMePill();
 
+  // на выходе чистим выбранный файл/превью
   clearSelectedFileUI();
-  setAuthMode("login");
 
   if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
 }
@@ -680,15 +613,19 @@ function connectWS() {
 
       const senderId = msg?.sender_id;
 
+      // если диалог реально открыт и видим — рендерим, читаем
       if (isDialogVisible(cid)) {
         if (msg?.id && !document.querySelector(`.msg[data-message-id="${msg.id}"]`)) {
           renderMessage(msg);
         }
         maybeMarkRead();
       } else {
+        // ✅ если это не наше сообщение — показываем NEW
         if (!(me && senderId && senderId === me.id)) {
           setUnread(cid, true);
         }
+
+        // ✅ если это новый чат (его нет в списке) — подгружаем диалоги
         if (!hasDialogRowInDOM(cid)) {
           scheduleDialogsReload("ws:new_message_unknown_dialog");
         }
@@ -894,6 +831,7 @@ async function loadDialogs() {
     })
     .join("");
 
+  // после перерендера — дорисовать все актуальные NEW (на всякий)
   for (const [cid, v] of unreadByChatId.entries()) {
     paintUnreadBadge(cid, v === true);
   }
@@ -1011,6 +949,7 @@ function renderAttachments(atts) {
   );
 }
 
+/* --- Time helpers (MSK) --- */
 const _mskFmt = new Intl.DateTimeFormat("ru-RU", {
   timeZone: "Europe/Moscow",
   hour: "2-digit",
@@ -1151,57 +1090,40 @@ async function uploadSelectedFile() {
   const f = file && file.files && file.files[0];
   if (!f) return null;
 
-  startRingAnim();
-  uploadInProgress = true;
-  disableSend(true);
+  showUpload(f.name);
 
   const form = new FormData();
   form.append("file", f);
 
   return await new Promise((resolve, reject) => {
-    uploadXHR = new XMLHttpRequest();
-    uploadXHR.open("POST", API + "/files/upload");
-    uploadXHR.setRequestHeader("Authorization", "Bearer " + token);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", API + "/files/upload");
+    xhr.setRequestHeader("Authorization", "Bearer " + token);
 
-    uploadXHR.upload.onprogress = (e) => {
-      if (!e.lengthComputable) return;
-      const pct = Math.round((e.loaded / e.total) * 100);
-      setProgressRing(pct);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        setUploadProgress(pct);
+      }
     };
 
-    uploadXHR.onload = () => {
-      uploadInProgress = false;
-      disableSend(false);
-
+    xhr.onload = () => {
       try {
-        if (uploadXHR.status >= 200 && uploadXHR.status < 300) {
-          doneRingAnim();
-          resolve(JSON.parse(uploadXHR.responseText));
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(JSON.parse(xhr.responseText));
         } else {
-          resetProgressRing();
-          reject(new Error(uploadXHR.responseText || `HTTP ${uploadXHR.status}`));
+          reject(new Error(xhr.responseText || `HTTP ${xhr.status}`));
         }
       } catch (e) {
-        resetProgressRing();
         reject(e);
       }
     };
 
-    uploadXHR.onerror = () => {
-      uploadInProgress = false;
-      disableSend(false);
-      resetProgressRing();
-      reject(new Error("Network error"));
-    };
-
-    uploadXHR.onabort = () => {
-      uploadInProgress = false;
-      disableSend(false);
-      resetProgressRing();
-      reject(new Error("Upload canceled"));
-    };
-
-    uploadXHR.send(form);
+    xhr.onerror = () => reject(new Error("Network error"));
+    xhr.send(form);
+  }).finally(() => {
+    hideUpload();
+    // ✅ ВАЖНО: file.value НЕ чистим тут, чтобы превью не пропадало до успешной отправки
   });
 }
 
@@ -1219,7 +1141,7 @@ async function sendMessage() {
   if (!token) return alert("Login first");
   if (!currentChatId) return alert("Select dialog");
   if (!me) return alert("Login first");
-  if (isSending || uploadInProgress) return;
+  if (isSending) return;
 
   const msgText = (text.value || "").trim();
   let fileIds = [];
@@ -1232,7 +1154,8 @@ async function sendMessage() {
       const up = await uploadSelectedFile();
       if (up && up.file_id) fileIds.push(up.file_id);
     } catch (e) {
-      return alert("Upload failed: " + String(e && e.message ? e.message : e));
+      alert("Upload failed: " + String(e && e.message ? e.message : e));
+      return;
     }
   }
 
@@ -1257,7 +1180,8 @@ async function sendMessage() {
     saveDraftForCurrentChat();
     isSending = false;
     disableSend(false);
-    return alert("Send failed: network/timeout");
+    alert("Send failed: network/timeout");
+    return;
   }
 
   isSending = false;
@@ -1266,7 +1190,8 @@ async function sendMessage() {
   if (!r.ok) {
     text.value = prevText;
     saveDraftForCurrentChat();
-    return alert("Send failed: " + (await readError(r)));
+    alert("Send failed: " + (await readError(r)));
+    return;
   }
 
   try {
@@ -1278,6 +1203,7 @@ async function sendMessage() {
   } catch (_) {}
 
   setUnread(currentChatId, false);
+
   clearSelectedFileUI();
 }
 
@@ -1294,46 +1220,17 @@ btnSend && (btnSend.onclick = () => sendMessage());
 btnLogout && (btnLogout.onclick = logout);
 btnSaveProfile && (btnSaveProfile.onclick = saveProfile);
 
-// auth mode switch
-authModeLogin && (authModeLogin.onclick = () => setAuthMode("login"));
-authModeRegister && (authModeRegister.onclick = () => setAuthMode("register"));
-
-// Enter in password triggers proper action
-if (p) {
-  p.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    if (authMode === "register") register();
-    else login();
-  });
-}
-// Enter in username moves to password
-if (u && p) {
-  u.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    p.focus();
-  });
-}
-
-// preview выбранного файла в чате
+// ✅ preview выбранного файла в чате
 if (file) {
   file.addEventListener("change", () => {
     const f = file.files && file.files[0];
     showSelectedFileUI(f || null);
   });
 }
-
-// ✕: отмена upload (если идёт), иначе убрать файл
 sfRemove && sfRemove.addEventListener("click", () => {
-  if (uploadInProgress && uploadXHR) {
-    try { uploadXHR.abort(); } catch (_) {}
-    return;
-  }
   clearSelectedFileUI();
 });
 
-// typing + send by Enter in chat composer
 if (text) {
   text.addEventListener("compositionstart", () => { isComposing = true; });
   text.addEventListener("compositionend", () => {
@@ -1361,16 +1258,22 @@ if (text) {
     }
   });
 
+  // ✅ FIX: убрали scrollIntoView, который ломал layout.
+  // Теперь максимум — если пользователь был у низа чата, держим его у низа.
   text.addEventListener("focus", () => {
-    setTimeout(() => {
-      try { text.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (_) {}
-    }, 120);
+    try {
+      const wasNearBottom = msgs ? isNearBottom() : false;
+      requestAnimationFrame(() => {
+        if (msgs && wasNearBottom) msgs.scrollTop = msgs.scrollHeight;
+      });
+    } catch (_) {}
   });
 }
 
-btnBack && btnBack.addEventListener("click", () => {
-  if (window.ui && typeof window.ui.showListMobile === "function") window.ui.showListMobile();
-});
+btnBack &&
+  btnBack.addEventListener("click", () => {
+    if (window.ui && typeof window.ui.showListMobile === "function") window.ui.showListMobile();
+  });
 
 /* =========================
    Boot
@@ -1379,8 +1282,6 @@ btnBack && btnBack.addEventListener("click", () => {
 (async () => {
   loadPersistedUnread();
   loadPersistedDrafts();
-
-  setAuthMode("login");
 
   if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
 
