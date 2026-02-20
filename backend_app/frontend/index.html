@@ -9,23 +9,18 @@
 
   <style>
     :root{
-      /* ===== Palette ===== */
       --bg:#000000;
       --accent:#D1FE17;
 
-      /* text */
       --text:rgba(255,255,255,.94);
       --muted:rgba(255,255,255,.62);
 
-      /* glass surfaces */
       --glass:  rgba(18,18,18,.38);
       --glass2: rgba(12,12,12,.52);
 
-      /* strokes */
       --stroke2: rgba(255,255,255,.10);
       --stroke:  rgba(209,254,23,.28);
 
-      /* shadows */
       --shadow: 0 18px 55px rgba(0,0,0,.62);
       --shadow2: 0 8px 28px rgba(0,0,0,.55);
 
@@ -44,12 +39,9 @@
       --sab: env(safe-area-inset-bottom, 0px);
       --sal: env(safe-area-inset-left, 0px);
 
-      /* glass tuning */
       --glassBlur: 26px;
       --glassSat:  170%;
       --glassBright: 108%;
-
-      /* readability */
       --panelDim: rgba(0,0,0,.35);
     }
 
@@ -187,9 +179,7 @@
         inset -1px 0 0 rgba(255,255,255,.04);
     }
 
-    .liquid{
-      --shimmerOpacity: .18;
-    }
+    .liquid{ --shimmerOpacity: .18; }
     .liquid .liquidLayer{
       position:absolute;
       inset:-40%;
@@ -387,6 +377,7 @@
       box-shadow:0 0 0 3px rgba(209,254,23,.16);
     }
 
+    /* ✅ FIX: кнопки всегда идеально центрируются */
     .btn{
       height:var(--btnH);
       border-radius:12px;
@@ -398,6 +389,12 @@
       font-weight:800;
       white-space:nowrap;
       line-height:1;
+
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      text-align:center;
+
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
     }
@@ -417,7 +414,6 @@
     .hint{ color:var(--muted); font-size:12px; line-height:1.4; }
     .row{ display:grid; gap:10px; }
     .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-    .actions{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
 
     .accountWrap{
       width:100%;
@@ -467,6 +463,84 @@
     }
     .fileBtn input[type="file"]{ position:absolute; inset:0; opacity:0; cursor:pointer; }
 
+    /* =========================
+       ✅ AUTH LAYOUT (идеально ПК/моб)
+       ========================= */
+    .authStack{ display:flex; flex-direction:column; gap:12px; }
+
+    .authSwitch{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:10px;
+      padding:6px;
+      border-radius:16px;
+      background:rgba(255,255,255,.05);
+      border:1px solid rgba(255,255,255,.10);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    /* ✅ FIX: кнопки сегмента тоже центрируем через flex */
+    .authSwitchBtn{
+      height:40px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.16);
+      color:rgba(255,255,255,.78);
+      font-weight:900;
+      cursor:pointer;
+      transition: background .18s ease, border-color .18s ease, transform .18s ease, color .18s ease;
+
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      text-align:center;
+      line-height:1;
+    }
+    .authSwitchBtn:hover{
+      background:rgba(255,255,255,.06);
+      border-color:rgba(209,254,23,.24);
+    }
+    .authSwitchBtn.active{
+      background:rgba(209,254,23,.92);
+      border-color:rgba(209,254,23,.55);
+      color:#0b0b0b;
+      box-shadow: 0 10px 24px rgba(209,254,23,.12);
+    }
+
+    .authRow2{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:10px;
+      align-items:center;
+    }
+
+    .authActions{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:10px;
+    }
+    .authPrimaryBtn{
+      width:100%;
+      justify-content:center;
+    }
+
+    .registerFields{
+      overflow:hidden;
+      max-height:0;
+      opacity:0;
+      transform: translateY(-6px);
+      transition: max-height .34s ease, opacity .24s ease, transform .24s ease;
+      will-change: max-height, opacity, transform;
+      pointer-events:none;
+    }
+    .registerFields.open{
+      max-height: 420px;
+      opacity:1;
+      transform: translateY(0);
+      pointer-events:auto;
+    }
+
     .profileTop{
       display:flex;
       align-items:center;
@@ -501,6 +575,7 @@
       margin-top:2px;
     }
 
+    /* Chats */
     .chatsLayout{
       width:100%;
       display:grid;
@@ -728,73 +803,87 @@
       color:rgba(255,255,255,.60);
       margin-top:2px;
     }
+
     .sfRemove{
-      height:34px;
-      width:34px;
+      position:relative;
+      height:36px;
+      width:36px;
       border-radius:12px;
       border:1px solid rgba(255,255,255,.14);
       background:rgba(255,255,255,.05);
       color:rgba(255,255,255,.78);
       cursor:pointer;
-      font-weight:900;
+      display:flex;
+      align-items:center;
+      justify-content:center;
       line-height:1;
       flex:0 0 auto;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
+      transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease;
     }
     .sfRemove:hover{
       border-color:rgba(255,90,90,.40);
       color:#ffb0b0;
       background:rgba(255,90,90,.10);
     }
-
-    .uploadBar{
-      display:none;
-      grid-column:1 / -1;
-      padding:10px 12px;
-      border-radius:12px;
-      border:1px solid rgba(255,255,255,.10);
-      background:rgba(255,255,255,.04);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
+    .sfRemoveInner{
       position:relative;
-      z-index:3;
+      z-index:2;
+      font-weight:900;
+      font-size:14px;
+      transform: translateY(-.5px);
+      user-select:none;
     }
-    .uploadTop{
-      display:flex;
-      justify-content:space-between;
-      gap:10px;
-      font-size:12px;
-      color:var(--muted);
-      margin-bottom:8px;
-
-      /* ✅ FIX: prevent long strings from breaking layout */
-      min-width:0;
+    .sfProgress{
+      position:absolute;
+      inset:0;
+      transform: rotate(-90deg);
+      pointer-events:none;
+      z-index:1;
     }
-    /* ✅ FIX: even if something long ends up here, it won't break flex */
-    #uploadName{
-      flex: 1 1 auto;
-      min-width:0;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      white-space:nowrap;
+    .sfProgressBg{
+      fill:none;
+      stroke: rgba(255,255,255,.10);
+      stroke-width:2;
     }
-    #uploadPct{ flex:0 0 auto; }
-
-    .progressTrack{
-      width:100%;
-      height:10px;
-      border-radius:999px;
-      background:rgba(255,255,255,.08);
-      overflow:hidden;
-      border:1px solid rgba(255,255,255,.08);
+    .sfProgressBar{
+      fill:none;
+      stroke: var(--accent);
+      stroke-width:3;
+      stroke-linecap:round;
+      stroke-dasharray: 100.53;
+      stroke-dashoffset: 100.53;
+      transition: stroke-dashoffset .16s linear, filter .22s ease;
+      filter: drop-shadow(0 0 0 rgba(209,254,23,0));
     }
-    .progressFill{
-      height:100%;
-      width:0%;
-      background:linear-gradient(90deg, rgba(209,254,23,.62), rgba(209,254,23,.92));
-      border-radius:999px;
-      transition: width .15s linear;
+    @keyframes ringPulse {
+      0%   { box-shadow: 0 0 0 rgba(209,254,23,0.00); }
+      50%  { box-shadow: 0 0 18px rgba(209,254,23,0.18); }
+      100% { box-shadow: 0 0 0 rgba(209,254,23,0.00); }
+    }
+    .sfRemove.uploading{
+      border-color: rgba(209,254,23,.45);
+      background: rgba(209,254,23,.10);
+      animation: ringPulse 1.2s ease-in-out infinite;
+    }
+    .sfRemove.uploading:hover{
+      border-color: rgba(209,254,23,.55);
+      background: rgba(209,254,23,.12);
+      color: rgba(255,255,255,.92);
+    }
+    .sfRemove.uploading .sfProgressBar{
+      filter: drop-shadow(0 0 8px rgba(209,254,23,0.22));
+    }
+    @keyframes ringDonePop {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+      100% { transform: scale(1); }
+    }
+    .sfRemove.done{
+      animation: ringDonePop .28s ease-out 1;
+      border-color: rgba(209,254,23,.65);
+      box-shadow: 0 10px 22px rgba(209,254,23,.10);
     }
 
     .unreadBadge{
@@ -831,12 +920,15 @@
       .composerLeft{ grid-template-columns:1fr 110px; }
       .msg{ max-width:92%; }
     }
+
     @media (max-width:520px){
       .row2{ grid-template-columns:1fr; }
-      .actions{ grid-template-columns:1fr; }
       .searchRow{ grid-template-columns:1fr 92px; }
       .composer{ grid-template-columns:1fr; }
       .composerLeft{ grid-template-columns:1fr 110px; }
+
+      .authRow2{ grid-template-columns: 1fr; }
+      .authSwitch{ grid-template-columns: 1fr 1fr; }
     }
   </style>
 </head>
@@ -932,17 +1024,14 @@
                   <div class="sfSub" id="sfSub">—</div>
                 </div>
               </div>
-              <button class="sfRemove" id="sfRemove" type="button" title="Убрать">✕</button>
-            </div>
 
-            <div class="uploadBar" id="uploadBar">
-              <div class="uploadTop">
-                <div id="uploadName">Uploading…</div>
-                <div id="uploadPct">0%</div>
-              </div>
-              <div class="progressTrack">
-                <div class="progressFill" id="uploadFill"></div>
-              </div>
+              <button class="sfRemove" id="sfRemove" type="button" title="Cancel upload">
+                <span class="sfRemoveInner">✕</span>
+                <svg class="sfProgress" viewBox="0 0 36 36" aria-hidden="true">
+                  <circle class="sfProgressBg" cx="18" cy="18" r="16"></circle>
+                  <circle class="sfProgressBar" cx="18" cy="18" r="16"></circle>
+                </svg>
+              </button>
             </div>
 
             <div class="composerLeft">
@@ -974,34 +1063,41 @@
           <div class="cardBody">
 
             <div id="authBox">
-              <div class="row2">
-                <input id="u" class="input" placeholder="username" />
-                <input id="p" class="input" placeholder="password" type="password" />
-              </div>
-
-              <div style="height:10px"></div>
-
-              <div class="row2">
-                <select id="birthYear" class="input">
-                  <option value="">Год рождения (не выбран)</option>
-                </select>
-
-                <div style="display:flex;align-items:center;gap:12px">
-                  <div class="avatarPreview" id="avatarPreview">👤</div>
-                  <label class="fileBtn" style="height:var(--inputH);">
-                    🖼️ Фото
-                    <input id="avatar" type="file" accept="image/*" />
-                  </label>
+              <div class="authStack">
+                <div class="authSwitch" role="tablist" aria-label="Auth mode">
+                  <button class="authSwitchBtn active" id="authModeLogin" type="button" aria-selected="true">Войти</button>
+                  <button class="authSwitchBtn" id="authModeRegister" type="button" aria-selected="false">Регистрация</button>
                 </div>
-              </div>
 
-              <div class="hint" style="margin-top:10px">
-                Регистрация: username + password + (опционально) год рождения + фото.
-              </div>
+                <div class="authRow2">
+                  <input id="u" class="input" placeholder="username" autocomplete="username" />
+                  <input id="p" class="input" placeholder="password" type="password" autocomplete="current-password" />
+                </div>
 
-              <div class="actions">
-                <button class="btn" id="btnRegister" type="button">Register</button>
-                <button class="btn secondary" id="btnLogin" type="button">Login</button>
+                <div id="registerFields" class="registerFields" aria-hidden="true">
+                  <div class="row2" style="margin-top:10px">
+                    <select id="birthYear" class="input">
+                      <option value="">Год рождения (не выбран)</option>
+                    </select>
+
+                    <div style="display:flex;align-items:center;gap:12px;justify-content:flex-end">
+                      <div class="avatarPreview" id="avatarPreview">👤</div>
+                      <label class="fileBtn" style="height:var(--inputH);">
+                        🖼️ Фото
+                        <input id="avatar" type="file" accept="image/*" />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="hint" style="margin-top:10px">
+                    Регистрация: username + password + (опционально) год рождения + фото.
+                  </div>
+                </div>
+
+                <div class="authActions">
+                  <button class="btn authPrimaryBtn" id="btnLogin" type="button">Войти</button>
+                  <button class="btn authPrimaryBtn" id="btnRegister" type="button" style="display:none">Зарегистрироваться</button>
+                </div>
               </div>
             </div>
 
@@ -1119,6 +1215,6 @@
     })();
   </script>
 
-  <script src="/static/app.js?v=3007"></script>
+  <script src="/static/app.js?v=3012"></script>
 </body>
 </html>
