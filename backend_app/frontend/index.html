@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Messenger MVP</title>
 
-  <!-- чтобы не было 404 favicon -->
   <link rel="icon" href="data:,">
 
   <style>
@@ -62,7 +61,6 @@
       border: 2px solid rgba(0,0,0,.35);
     }
 
-    /* ---------- Top shell ---------- */
     .shell{
       max-width:1320px;
       margin:0 auto;
@@ -103,12 +101,6 @@
       user-select:none;
       white-space:nowrap;
     }
-    .brand small{
-      color:rgba(115,255,59,.78);
-      font-weight:800;
-      letter-spacing:.06em;
-      font-size:12px;
-    }
     .tabs{
       display:flex;
       gap:8px;
@@ -145,9 +137,19 @@
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;
+      display:flex;
+      align-items:center;
+      gap:8px;
     }
+    .meMiniAv{
+      width:22px;height:22px;border-radius:999px;overflow:hidden;
+      border:1px solid rgba(255,255,255,.14);
+      display:inline-flex;align-items:center;justify-content:center;
+      background:rgba(255,255,255,.04);
+      flex:0 0 auto;
+    }
+    .meMiniAv img{width:100%;height:100%;object-fit:cover;display:block}
 
-    /* ---------- Pages ---------- */
     .page{ display:none; min-height:0; flex:1; }
     .page.active{ display:flex; min-height:0; }
 
@@ -208,6 +210,11 @@
       color:var(--text);
       background:rgba(255,255,255,.04);
     }
+    .btn.danger{
+      border-color:rgba(255,90,90,.35);
+      color:#ff8a8a;
+      background:rgba(255,90,90,.08);
+    }
     .btn:active{ transform:translateY(1px); }
 
     .hint{ color:var(--muted); font-size:12px; line-height:1.4; }
@@ -215,21 +222,16 @@
     .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
     .actions{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
 
-    /* ---------- Account page ---------- */
     .accountWrap{
       width:100%;
-      max-width:520px;
+      max-width:560px;
       margin:0 auto;
       display:flex;
       flex-direction:column;
       gap:var(--gap);
       min-height:0;
     }
-    .avatarRow{
-      display:flex;
-      align-items:center;
-      gap:12px;
-    }
+
     .avatarPreview{
       width:64px;
       height:64px;
@@ -244,12 +246,8 @@
       color:var(--muted);
       font-weight:900;
     }
-    .avatarPreview img{
-      width:100%;
-      height:100%;
-      object-fit:cover;
-      display:block;
-    }
+    .avatarPreview img{ width:100%; height:100%; object-fit:cover; display:block; }
+
     .fileBtn{
       position:relative;
       overflow:hidden;
@@ -268,7 +266,38 @@
     }
     .fileBtn input[type="file"]{ position:absolute; inset:0; opacity:0; cursor:pointer; }
 
-    /* ---------- Chats page ---------- */
+    /* profile card layout */
+    .profileTop{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      padding:12px 14px;
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:16px;
+      background:rgba(255,255,255,.02);
+    }
+    .profileLeft{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      min-width:0;
+    }
+    .profileName{
+      font-weight:900;
+      font-size:14px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      max-width:320px;
+    }
+    .profileSub{
+      font-size:12px;
+      color:var(--muted);
+      margin-top:2px;
+    }
+
+    /* Chats */
     .chatsLayout{
       width:100%;
       display:grid;
@@ -276,14 +305,12 @@
       gap:var(--gap);
       min-height:0;
     }
-
     .sidebar{
       display:flex;
       flex-direction:column;
       gap:var(--gap);
       min-height:0;
     }
-
     .list{ display:flex; flex-direction:column; gap:8px; }
     .item{
       padding:10px 12px;
@@ -301,7 +328,6 @@
       gap:10px;
       align-items:center;
     }
-
     .dialogsBody{ flex:1; min-height:0; overflow:auto; }
 
     .chat{
@@ -411,6 +437,82 @@
       min-width:0;
     }
 
+    /* Selected file visual */
+    .selectedFile{
+      grid-column:1 / -1;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.10);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.03), transparent 60%),
+        rgba(255,255,255,.03);
+
+      box-shadow: 0 10px 24px rgba(0,0,0,.35);
+    }
+    .sfLeft{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      min-width:0;
+    }
+    .sfIcon{
+      width:36px;
+      height:36px;
+      border-radius:12px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      border:1px solid rgba(115,255,59,.25);
+      background:rgba(115,255,59,.08);
+      flex:0 0 auto;
+      font-size:18px;
+      overflow:hidden;
+    }
+    /* ✅ thumb */
+    .sfIcon img{
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      display:block;
+    }
+
+    .sfMeta{ min-width:0; }
+    .sfName{
+      font-weight:800;
+      font-size:13px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      max-width: 52vw;
+    }
+    .sfSub{
+      font-size:12px;
+      color:rgba(255,255,255,.55);
+      margin-top:2px;
+    }
+    .sfRemove{
+      height:34px;
+      width:34px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.04);
+      color:rgba(255,255,255,.75);
+      cursor:pointer;
+      font-weight:900;
+      line-height:1;
+      flex:0 0 auto;
+    }
+    .sfRemove:hover{
+      border-color:rgba(255,90,90,.35);
+      color:#ffb0b0;
+      background:rgba(255,90,90,.08);
+    }
+
     .uploadBar{
       display:none;
       grid-column:1 / -1;
@@ -443,7 +545,6 @@
       transition: width .15s linear;
     }
 
-    /* ✅ NEW badge */
     .unreadBadge{
       margin-left:auto;
       font-size:11px;
@@ -455,23 +556,13 @@
       color:var(--accent);
     }
 
-    /* ---------- Mobile: two-screen chat (list <-> dialog) ---------- */
     @media (max-width:980px){
       body{ overflow:auto; }
-
       .shell{
         padding-bottom: calc(14px + var(--sab));
         overflow:hidden;
       }
-
-      .chatsLayout{
-        grid-template-columns:1fr;
-      }
-
-      .sidebar{
-        display:flex;
-      }
-
+      .chatsLayout{ grid-template-columns:1fr; }
       .chat{
         position:fixed;
         inset: calc(64px + var(--sat)) calc(14px + var(--sar)) calc(14px + var(--sab)) calc(14px + var(--sal));
@@ -485,11 +576,9 @@
 
       .backBtn{ display:inline-flex; align-items:center; justify-content:center; }
       .chatTitle{ max-width: 52vw; }
-
       .composerLeft{ grid-template-columns:1fr 110px; }
       .msg{ max-width:92%; }
     }
-
     @media (max-width:520px){
       .row2{ grid-template-columns:1fr; }
       .actions{ grid-template-columns:1fr; }
@@ -507,14 +596,14 @@
       <div class="brand">Чебур<span style="opacity:.9">.</span>net</div>
 
       <div class="tabs" role="tablist" aria-label="Main tabs">
-        <button class="tabBtn active" id="tabChats" type="button" aria-controls="pageChats" aria-selected="true">Чаты</button>
-        <button class="tabBtn" id="tabAccount" type="button" aria-controls="pageAccount" aria-selected="false">Аккаунт</button>
+        <button class="tabBtn" id="tabChats" type="button" aria-controls="pageChats" aria-selected="false">Чаты</button>
+        <button class="tabBtn active" id="tabAccount" type="button" aria-controls="pageAccount" aria-selected="true">Аккаунт</button>
       </div>
 
       <div class="mePill" id="mePill"><small>not logged in</small></div>
     </div>
 
-    <section class="page active" id="pageChats" role="tabpanel" aria-labelledby="tabChats">
+    <section class="page" id="pageChats" role="tabpanel" aria-labelledby="tabChats">
       <div class="chatsLayout" id="chatsLayout">
 
         <aside class="sidebar scroll">
@@ -564,6 +653,19 @@
           </div>
 
           <div class="composer">
+
+            <!-- selected file preview -->
+            <div class="selectedFile" id="selectedFile" style="display:none">
+              <div class="sfLeft">
+                <div class="sfIcon" id="sfIcon">📎</div>
+                <div class="sfMeta">
+                  <div class="sfName" id="sfName">file</div>
+                  <div class="sfSub" id="sfSub">—</div>
+                </div>
+              </div>
+              <button class="sfRemove" id="sfRemove" type="button" title="Убрать">✕</button>
+            </div>
+
             <div class="uploadBar" id="uploadBar">
               <div class="uploadTop">
                 <div id="uploadName">Uploading…</div>
@@ -588,46 +690,87 @@
       </div>
     </section>
 
-    <section class="page" id="pageAccount" role="tabpanel" aria-labelledby="tabAccount">
+    <section class="page active" id="pageAccount" role="tabpanel" aria-labelledby="tabAccount">
       <div class="accountWrap scroll" style="overflow:auto;">
+
         <section class="card">
           <div class="cardHeader">
             <div class="cardTitle">Аккаунт</div>
-            <div class="mePill" id="mePill2"><small>not logged in</small></div>
           </div>
 
           <div class="cardBody">
-            <div class="row2">
-              <input id="u" class="input" placeholder="username" />
-              <input id="p" class="input" placeholder="password" type="password" />
-            </div>
 
-            <div style="height:10px"></div>
+            <!-- AUTH -->
+            <div id="authBox">
+              <div class="row2">
+                <input id="u" class="input" placeholder="username" />
+                <input id="p" class="input" placeholder="password" type="password" />
+              </div>
 
-            <div class="row2">
-              <select id="birthYear" class="input">
-                <option value="">Год рождения (не выбран)</option>
-              </select>
+              <div style="height:10px"></div>
 
-              <div class="avatarRow">
-                <div class="avatarPreview" id="avatarPreview">👤</div>
-                <label class="fileBtn" style="height:var(--inputH);">
-                  🖼️ Фото
-                  <input id="avatar" type="file" accept="image/*" />
-                </label>
+              <div class="row2">
+                <select id="birthYear" class="input">
+                  <option value="">Год рождения (не выбран)</option>
+                </select>
+
+                <div style="display:flex;align-items:center;gap:12px">
+                  <div class="avatarPreview" id="avatarPreview">👤</div>
+                  <label class="fileBtn" style="height:var(--inputH);">
+                    🖼️ Фото
+                    <input id="avatar" type="file" accept="image/*" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="hint" style="margin-top:10px">
+                Регистрация: username + password + (опционально) год рождения + фото.
+              </div>
+
+              <div class="actions">
+                <button class="btn" id="btnRegister" type="button">Register</button>
+                <button class="btn secondary" id="btnLogin" type="button">Login</button>
               </div>
             </div>
 
-            <div class="hint" style="margin-top:10px">
-              Регистрация: username + password + (опционально) год рождения + фото.
+            <!-- PROFILE -->
+            <div id="profileBox" style="display:none">
+              <div class="profileTop">
+                <div class="profileLeft">
+                  <div class="avatarPreview" id="profileAvatar">👤</div>
+                  <div style="min-width:0">
+                    <div class="profileName" id="profileName">@—</div>
+                    <div class="profileSub">Личный кабинет</div>
+                  </div>
+                </div>
+
+                <button class="btn danger" id="btnLogout" type="button">Logout</button>
+              </div>
+
+              <div style="height:12px"></div>
+
+              <div class="row2">
+                <select id="profileBirthYear" class="input">
+                  <option value="">Год рождения (не выбран)</option>
+                </select>
+
+                <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end">
+                  <label class="fileBtn" style="height:var(--inputH);">
+                    🖼️ Изменить фото
+                    <input id="profileAvatarInput" type="file" accept="image/*" />
+                  </label>
+                  <button class="btn" id="btnSaveProfile" type="button">Save</button>
+                </div>
+              </div>
+
+              <div class="hint" style="margin-top:10px">
+                Изменения сохраняются в профиле: год рождения и аватарка.
+              </div>
             </div>
 
-            <div class="actions">
-              <button class="btn" id="btnRegister" type="button">Register</button>
-              <button class="btn secondary" id="btnLogin" type="button">Login</button>
-            </div>
           </div>
         </section>
+
       </div>
     </section>
 
@@ -654,38 +797,39 @@
         pageChats.classList.toggle('active', isChats);
         pageAccount.classList.toggle('active', !isChats);
 
-        if (!isChats) {
-          chatsLayout.classList.remove('chats-open-chat');
-        }
+        if (!isChats) chatsLayout.classList.remove('chats-open-chat');
       }
 
-      function showChatMobile(){
-        chatsLayout.classList.add('chats-open-chat');
-      }
-
-      function showListMobile(){
-        chatsLayout.classList.remove('chats-open-chat');
-      }
+      function showChatMobile(){ chatsLayout.classList.add('chats-open-chat'); }
+      function showListMobile(){ chatsLayout.classList.remove('chats-open-chat'); }
 
       tabChats.addEventListener('click', ()=>setTab('chats'));
       tabAccount.addEventListener('click', ()=>setTab('account'));
       btnBack.addEventListener('click', showListMobile);
 
-      window.ui = {
-        setTab,
-        showChatMobile,
-        showListMobile,
-      };
+      window.ui = { setTab, showChatMobile, showListMobile };
+
+      // populate year selects
+      const now = new Date().getFullYear();
+      const years = [];
+      for (let y = now - 10; y >= now - 90; y--) years.push(y);
 
       const by = document.getElementById('birthYear');
-      const now = new Date().getFullYear();
-      for (let y = now - 10; y >= now - 90; y--){
-        const opt = document.createElement('option');
-        opt.value = String(y);
-        opt.textContent = String(y);
-        by.appendChild(opt);
+      const pby = document.getElementById('profileBirthYear');
+
+      for (const y of years){
+        const opt1 = document.createElement('option');
+        opt1.value = String(y);
+        opt1.textContent = String(y);
+        by.appendChild(opt1);
+
+        const opt2 = document.createElement('option');
+        opt2.value = String(y);
+        opt2.textContent = String(y);
+        pby.appendChild(opt2);
       }
 
+      // preview (register)
       const avatar = document.getElementById('avatar');
       const preview = document.getElementById('avatarPreview');
       avatar.addEventListener('change', () => {
@@ -694,9 +838,19 @@
         const url = URL.createObjectURL(f);
         preview.innerHTML = `<img src="${url}" alt="avatar">`;
       });
+
+      // preview (profile change)
+      const av2 = document.getElementById('profileAvatarInput');
+      const prev2 = document.getElementById('profileAvatar');
+      av2.addEventListener('change', () => {
+        const f = av2.files && av2.files[0];
+        if (!f) return;
+        const url = URL.createObjectURL(f);
+        prev2.innerHTML = `<img src="${url}" alt="avatar">`;
+      });
     })();
   </script>
 
-  <script src="/static/app.js?v=2005"></script>
+  <script src="/static/app.js?v=3005"></script>
 </body>
 </html>

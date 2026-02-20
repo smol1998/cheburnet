@@ -47,8 +47,17 @@ const file = document.getElementById("file");
 const birthYear = document.getElementById("birthYear");
 const avatarInput = document.getElementById("avatar");
 
+const profileBox = document.getElementById("profileBox");
+const authBox = document.getElementById("authBox");
+const profileName = document.getElementById("profileName");
+const profileAvatar = document.getElementById("profileAvatar");
+const profileBirthYear = document.getElementById("profileBirthYear");
+const profileAvatarInput = document.getElementById("profileAvatarInput");
+
+const btnSaveProfile = document.getElementById("btnSaveProfile");
+const btnLogout = document.getElementById("btnLogout");
+
 const mePill = document.getElementById("mePill");
-const mePill2 = document.getElementById("mePill2");
 
 const chatTitle = document.getElementById("chatTitle");
 const msgs = document.getElementById("msgs");
@@ -72,6 +81,16 @@ const uploadFill = document.getElementById("uploadFill");
 
 const btnBack = document.getElementById("btnBack");
 
+// Selected file UI
+const selectedFile = document.getElementById("selectedFile");
+const sfIcon = document.getElementById("sfIcon");
+const sfName = document.getElementById("sfName");
+const sfSub = document.getElementById("sfSub");
+const sfRemove = document.getElementById("sfRemove");
+
+// ✅ чтобы не текло: держим objectURL
+let selectedPreviewUrl = null;
+
 /* =========================
    Helpers
    ========================= */
@@ -80,10 +99,57 @@ function authHeadersJson() {
   return { Authorization: "Bearer " + token, "Content-Type": "application/json" };
 }
 
-function setMeUI() {
-  const html = me ? `@${escapeHtml(me.username)}` : `<small>not logged in</small>`;
-  if (mePill) mePill.innerHTML = html;
-  if (mePill2) mePill2.innerHTML = html;
+function escapeHtml(s) {
+  return (s || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+async function readError(r) {
+  let txt = "";
+  try { txt = await r.text(); } catch (_) {}
+  try {
+    const j = JSON.parse(txt);
+    if (j && j.detail) return String(j.detail);
+  } catch (_) {}
+  return txt || `HTTP ${r.status}`;
+}
+
+function fileUrl(pathOrUrl, v = null) {
+  if (!pathOrUrl) return "";
+  const sep1 = pathOrUrl.includes("?") ? "&" : "?";
+  let out = API + pathOrUrl;
+
+  if (token) out += `${sep1}token=${encodeURIComponent(token)}`;
+
+  if (v !== null && v !== undefined && v !== "") {
+    const sep2 = out.includes("?") ? "&" : "?";
+    out += `${sep2}v=${encodeURIComponent(String(v))}`;
+  }
+
+  return out;
+}
+
+function ensureAvatarPath(uobj) {
+  if (!uobj) return null;
+  if (uobj.avatar_url) return uobj.avatar_url;
+  if (uobj.avatar_file_id) return `/files/${uobj.avatar_file_id}`;
+  return null;
+}
+
+function renderMiniMePill() {
+  if (!mePill) return;
+
+  if (!me) {
+    mePill.innerHTML = `<small>not logged in</small>`;
+    return;
+  }
+
+  const path = ensureAvatarPath(me);
+  const src = path ? fileUrl(path, me.avatar_file_id || Date.now()) : "";
+  const av = src
+    ? `<span class="meMiniAv"><img src="${src}" alt="me" onerror="this.onerror=null;this.parentElement.innerHTML='👤'"></span>`
+    : `<span class="meMiniAv">👤</span>`;
+
+  mePill.innerHTML = `${av}<span>@${escapeHtml(me.username)}</span>`;
 }
 
 function setOnlineUI(on) {
@@ -94,84 +160,6 @@ function setOnlineUI(on) {
 function setTypingUI(txt) {
   if (!typingText) return;
   typingText.textContent = txt || "";
-}
-
-async function readError(r) {
-  let txt = "";
-  try {
-    txt = await r.text();
-  } catch (_) {}
-  try {
-    const j = JSON.parse(txt);
-    if (j && j.detail) return String(j.detail);
-  } catch (_) {}
-  return txt || `HTTP ${r.status}`;
-}
-
-function escapeHtml(s) {
-  return (s || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
-/**
- * Делает URL до файла с добавлением ?token=...
- * и опциональным cache-bust параметром v=...
- */
-function fileUrl(pathOrUrl, v = null) {
-  if (!pathOrUrl) return "";
-  const sep1 = pathOrUrl.includes("?") ? "&" : "?";
-  let out = API + pathOrUrl;
-
-  if (token) out += `${sep1}token=${encodeURIComponent(token)}`;
-
-  // cache-bust (важно для <img>, чтобы не держать старый 401/404 в кеше)
-  if (v !== null && v !== undefined && v !== "") {
-    const sep2 = out.includes("?") ? "&" : "?";
-    out += `${sep2}v=${encodeURIComponent(String(v))}`;
-  }
-
-  return out;
-}
-
-/**
- * Возвращает относительный путь к аватару, если бек не дал avatar_url.
- */
-function ensureAvatarPath(u) {
-  if (!u) return null;
-  if (u.avatar_url) return u.avatar_url;
-  if (u.avatar_file_id) return `/files/${u.avatar_file_id}`;
-  return null;
-}
-
-/**
- * Рендер аватара: если URL есть — рисуем img с onerror,
- * иначе — fallback "?".
- */
-function renderAvatarSpan(userObj, sizePx = 22) {
-  const path = ensureAvatarPath(userObj);
-  const v = userObj && userObj.avatar_file_id ? userObj.avatar_file_id : Date.now(); // v — сброс кеша
-  const src = path ? fileUrl(path, v) : "";
-
-  const boxStyle =
-    `width:${sizePx}px;height:${sizePx}px;border-radius:999px;` +
-    `overflow:hidden;display:inline-flex;align-items:center;justify-content:center;` +
-    `border:1px solid rgba(255,255,255,.12);flex:0 0 auto;`;
-
-  if (!src) {
-    return `<span style="${boxStyle};color:rgba(255,255,255,.35);font-weight:900;font-size:12px">?</span>`;
-  }
-
-  // onerror → показать fallback
-  // (Важно: часть браузеров кэшируют неудачные загрузки img, v= помогает)
-  return `
-    <span style="${boxStyle}">
-      <img
-        src="${src}"
-        alt="avatar"
-        style="width:100%;height:100%;object-fit:cover;display:block"
-        onerror="this.onerror=null; this.parentElement.innerHTML='?'; this.parentElement.style.color='rgba(255,255,255,.35)'; this.parentElement.style.fontWeight='900'; this.parentElement.style.fontSize='12px'; this.parentElement.style.display='inline-flex'; this.parentElement.style.alignItems='center'; this.parentElement.style.justifyContent='center';"
-      />
-    </span>
-  `;
 }
 
 function isNearBottom() {
@@ -190,6 +178,108 @@ function disableSend(disabled) {
   if (!btnSend) return;
   btnSend.disabled = !!disabled;
   btnSend.style.opacity = disabled ? "0.7" : "1";
+}
+
+/* =========================
+   Selected file UI (thumb)
+   ========================= */
+
+function fmtBytes(n) {
+  const v = Number(n || 0);
+  if (!v) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  let x = v;
+  while (x >= 1024 && i < units.length - 1) { x /= 1024; i++; }
+  const num = i === 0 ? String(Math.round(x)) : String(Math.round(x * 10) / 10);
+  return `${num} ${units[i]}`;
+}
+
+function pickFileIcon(mime, name) {
+  const m = String(mime || "").toLowerCase();
+  const n = String(name || "").toLowerCase();
+  if (m.startsWith("image/")) return "🖼️";
+  if (m.startsWith("video/")) return "🎬";
+  if (m.startsWith("audio/")) return "🎵";
+  if (n.endsWith(".pdf")) return "📄";
+  if (n.endsWith(".zip") || n.endsWith(".rar") || n.endsWith(".7z")) return "🗜️";
+  return "📎";
+}
+
+function revokeSelectedPreviewUrl() {
+  if (selectedPreviewUrl) {
+    try { URL.revokeObjectURL(selectedPreviewUrl); } catch (_) {}
+    selectedPreviewUrl = null;
+  }
+}
+
+function showSelectedFileUI(f) {
+  if (!selectedFile) return;
+
+  if (!f) {
+    selectedFile.style.display = "none";
+    revokeSelectedPreviewUrl();
+    if (sfIcon) sfIcon.textContent = "📎";
+    if (sfName) sfName.textContent = "";
+    if (sfSub) sfSub.textContent = "";
+    return;
+  }
+
+  selectedFile.style.display = "flex";
+
+  if (sfName) sfName.textContent = f.name || "file";
+  if (sfSub) sfSub.textContent = `${fmtBytes(f.size)} • ${f.type || "unknown"}`;
+
+  // ✅ thumb only for image/*
+  const isImg = String(f.type || "").toLowerCase().startsWith("image/");
+  if (sfIcon) {
+    revokeSelectedPreviewUrl();
+    if (isImg) {
+      selectedPreviewUrl = URL.createObjectURL(f);
+      sfIcon.innerHTML = `<img src="${selectedPreviewUrl}" alt="preview">`;
+    } else {
+      sfIcon.textContent = pickFileIcon(f.type, f.name);
+    }
+  }
+}
+
+function clearSelectedFile() {
+  if (file) file.value = "";
+  showSelectedFileUI(null);
+}
+
+/* =========================
+   Account UI state
+   ========================= */
+
+function setAccountMode(loggedIn) {
+  if (authBox) authBox.style.display = loggedIn ? "none" : "block";
+  if (profileBox) profileBox.style.display = loggedIn ? "block" : "none";
+}
+
+function paintProfile() {
+  if (!me) {
+    setAccountMode(false);
+    renderMiniMePill();
+    return;
+  }
+
+  setAccountMode(true);
+
+  if (profileName) profileName.textContent = `@${me.username || "—"}`;
+
+  if (profileAvatar) {
+    const path = ensureAvatarPath(me);
+    const src = path ? fileUrl(path, me.avatar_file_id || Date.now()) : "";
+    profileAvatar.innerHTML = src ? `<img src="${src}" alt="avatar" />` : `👤`;
+  }
+
+  if (profileBirthYear) {
+    const by = me.birth_year ? String(me.birth_year) : "";
+    profileBirthYear.value = by;
+  }
+
+  renderMiniMePill();
 }
 
 /* =========================
@@ -287,20 +377,16 @@ function hideUpload() {
 }
 
 /* =========================
-   Auth
+   Auth / Me
    ========================= */
 
 async function register() {
-  // ✅ регистрация через multipart/form-data
   const username = (u.value || "").trim();
   const password = (p.value || "").trim();
   const by = birthYear ? (birthYear.value || "").trim() : "";
   const av = avatarInput && avatarInput.files ? avatarInput.files[0] : null;
 
-  if (!username || !password) {
-    alert("Введите username и password");
-    return;
-  }
+  if (!username || !password) return alert("Введите username и password");
 
   const form = new FormData();
   form.append("username", username);
@@ -308,19 +394,10 @@ async function register() {
   if (by) form.append("birth_year", by);
   if (av) form.append("avatar", av);
 
-  const r = await fetch(API + "/auth/register_form", {
-    method: "POST",
-    body: form,
-  });
-
-  if (!r.ok) {
-    alert("Register failed: " + (await readError(r)));
-    return;
-  }
+  const r = await fetch(API + "/auth/register_form", { method: "POST", body: form });
+  if (!r.ok) return alert("Register failed: " + (await readError(r)));
 
   const j = await r.json();
-
-  // ✅ авто-логин
   if (j && j.access_token) {
     token = j.access_token;
     localStorage.setItem("token", token);
@@ -329,10 +406,7 @@ async function register() {
     connectWS();
     await loadDialogs();
 
-    // чтобы сразу увидеть — переключим на чаты
-    if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("chats");
-
-    alert("Registered & logged in ✅");
+    if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
   } else {
     alert("Registered. Now login.");
   }
@@ -348,10 +422,7 @@ async function login() {
     body: JSON.stringify({ username, password }),
   });
 
-  if (!r.ok) {
-    alert("Login failed: " + (await readError(r)));
-    return;
-  }
+  if (!r.ok) return alert("Login failed: " + (await readError(r)));
 
   const j = await r.json();
   token = j.access_token;
@@ -361,18 +432,68 @@ async function login() {
   connectWS();
   await loadDialogs();
 
-  if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("chats");
+  if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
 }
 
 async function loadMe() {
+  if (!token) {
+    me = null;
+    paintProfile();
+    return;
+  }
+
   const r = await fetch(API + "/auth/me", { headers: { Authorization: "Bearer " + token } });
   if (!r.ok) {
     me = null;
-    setMeUI();
+    paintProfile();
     return;
   }
   me = await r.json();
-  setMeUI();
+  paintProfile();
+}
+
+function logout() {
+  token = "";
+  me = null;
+  localStorage.removeItem("token");
+
+  try { if (ws) ws.close(); } catch (_) {}
+  ws = null;
+
+  setAccountMode(false);
+  renderMiniMePill();
+
+  if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
+}
+
+async function saveProfile() {
+  if (!token || !me) return;
+
+  const by = profileBirthYear ? (profileBirthYear.value || "").trim() : "";
+  const av = profileAvatarInput && profileAvatarInput.files ? profileAvatarInput.files[0] : null;
+
+  const byInt = by ? parseInt(by, 10) : null;
+  const sameBirth = (me.birth_year || null) === (Number.isFinite(byInt) ? byInt : null);
+  const hasAvatar = !!av;
+
+  if (sameBirth && !hasAvatar) return;
+
+  const form = new FormData();
+  if (by) form.append("birth_year", by);
+  if (av) form.append("avatar", av);
+
+  const r = await fetch(API + "/auth/profile_update_form", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token },
+    body: form,
+  });
+
+  if (!r.ok) return alert("Save failed: " + (await readError(r)));
+
+  const j = await r.json();
+  me = j;
+  if (profileAvatarInput) profileAvatarInput.value = "";
+  paintProfile();
 }
 
 /* =========================
@@ -390,9 +511,7 @@ function scheduleReconnect() {
 }
 
 function connectWS() {
-  try {
-    if (ws) ws.close();
-  } catch (_) {}
+  try { if (ws) ws.close(); } catch (_) {}
 
   if (!token) return;
 
@@ -404,23 +523,15 @@ function connectWS() {
     if (currentChatId) wsSend({ type: "presence:subscribe", chat_id: currentChatId });
   };
 
-  ws.onclose = () => {
-    scheduleReconnect();
-  };
+  ws.onclose = () => { scheduleReconnect(); };
 
   ws.onerror = () => {
-    try {
-      ws.close();
-    } catch (_) {}
+    try { ws.close(); } catch (_) {}
   };
 
   ws.onmessage = (ev) => {
     let data;
-    try {
-      data = JSON.parse(ev.data);
-    } catch (_) {
-      return;
-    }
+    try { data = JSON.parse(ev.data); } catch (_) { return; }
 
     if (data.type === "message:new") {
       const cid = data.chat_id;
@@ -433,9 +544,7 @@ function connectWS() {
         maybeMarkRead();
       } else {
         const senderId = msg?.sender_id;
-        if (!(me && senderId && senderId === me.id)) {
-          setUnread(cid, true);
-        }
+        if (!(me && senderId && senderId === me.id)) setUnread(cid, true);
       }
     }
 
@@ -448,9 +557,7 @@ function connectWS() {
       clearTimeout(typingTimer);
       typingTimer = setTimeout(() => setTypingUI(""), 2000);
     }
-    if (data.type === "typing:stop" && data.chat_id === currentChatId) {
-      setTypingUI("");
-    }
+    if (data.type === "typing:stop" && data.chat_id === currentChatId) setTypingUI("");
 
     if (data.type === "message:read" && data.chat_id === currentChatId) {
       otherLastRead = Math.max(otherLastRead, data.last_read_message_id || 0);
@@ -460,9 +567,7 @@ function connectWS() {
 }
 
 function wsSend(obj) {
-  try {
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
-  } catch (_) {}
+  try { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); } catch (_) {}
 }
 
 /* =========================
@@ -505,6 +610,36 @@ function stopChatPoll() {
 }
 
 /* =========================
+   Avatars in dialogs
+   ========================= */
+
+function renderAvatarSpan(userObj, sizePx = 22) {
+  const path = ensureAvatarPath(userObj);
+  const v = userObj && userObj.avatar_file_id ? userObj.avatar_file_id : Date.now();
+  const src = path ? fileUrl(path, v) : "";
+
+  const boxStyle =
+    `width:${sizePx}px;height:${sizePx}px;border-radius:999px;` +
+    `overflow:hidden;display:inline-flex;align-items:center;justify-content:center;` +
+    `border:1px solid rgba(255,255,255,.12);flex:0 0 auto;`;
+
+  if (!src) {
+    return `<span style="${boxStyle};color:rgba(255,255,255,.35);font-weight:900;font-size:12px">?</span>`;
+  }
+
+  return `
+    <span style="${boxStyle}">
+      <img
+        src="${src}"
+        alt="avatar"
+        style="width:100%;height:100%;object-fit:cover;display:block"
+        onerror="this.onerror=null; this.parentElement.innerHTML='?'; this.parentElement.style.color='rgba(255,255,255,.35)'; this.parentElement.style.fontWeight='900'; this.parentElement.style.fontSize='12px'; this.parentElement.style.display='inline-flex'; this.parentElement.style.alignItems='center'; this.parentElement.style.justifyContent='center';"
+      />
+    </span>
+  `;
+}
+
+/* =========================
    Search / Dialogs
    ========================= */
 
@@ -516,10 +651,7 @@ async function search() {
     headers: { Authorization: "Bearer " + token },
   });
 
-  if (!r.ok) {
-    alert("Search failed: " + (await readError(r)));
-    return;
-  }
+  if (!r.ok) return alert("Search failed: " + (await readError(r)));
 
   const list = await r.json();
 
@@ -538,17 +670,11 @@ async function startDM(otherId, username) {
     body: JSON.stringify({ other_user_id: otherId }),
   });
 
-  if (!r.ok) {
-    alert("Start DM failed: " + (await readError(r)));
-    return;
-  }
+  if (!r.ok) return alert("Start DM failed: " + (await readError(r)));
 
   const j = await r.json();
 
-  if (j.with && j.chat_id) {
-    // ✅ сохраняем аватар/ник в map
-    otherByChatId.set(j.chat_id, j.with);
-  }
+  if (j.with && j.chat_id) otherByChatId.set(j.chat_id, j.with);
 
   await loadDialogs();
   openChat(j.chat_id, otherId, username);
@@ -566,7 +692,6 @@ function paintUnreadBadge(chatId, show) {
     if (old) old.remove();
     return;
   }
-
   if (!old) row.insertAdjacentHTML("beforeend", `<span class="unreadBadge">NEW</span>`);
 }
 
@@ -574,10 +699,7 @@ async function loadDialogs() {
   if (!token) return;
 
   const r = await fetch(API + "/chats/dm/list", { headers: { Authorization: "Bearer " + token } });
-  if (!r.ok) {
-    alert("Load dialogs failed: " + (await readError(r)));
-    return;
-  }
+  if (!r.ok) return alert("Load dialogs failed: " + (await readError(r)));
 
   const list = await r.json();
 
@@ -591,7 +713,6 @@ async function loadDialogs() {
       const hasUnread = unreadByChatId.get(d.chat_id) === true;
       const safeName = String(other.username || "").replaceAll("'", "");
 
-      // ✅ аватар: берём avatar_url ИЛИ строим из avatar_file_id
       const av = renderAvatarSpan(other, 22);
 
       return `<div class="item" data-chatid="${d.chat_id}" onclick="openChat(${d.chat_id}, ${other.id}, '${safeName}')">
@@ -624,8 +745,6 @@ async function openChat(chatId, otherId, title) {
 
   const other = otherByChatId.get(chatId) || { id: otherId, username: title, avatar_url: null, avatar_file_id: null };
   const username = other?.username || title || "—";
-
-  // ✅ аватар в шапке — тоже через общий рендер
   const av = renderAvatarSpan(other, 30);
 
   if (chatTitle) {
@@ -668,10 +787,7 @@ async function loadMessagesPage(beforeId = null, prepend = false) {
   if (beforeId) url.searchParams.set("before_id", String(beforeId));
 
   const r = await fetch(url.toString(), { headers: { Authorization: "Bearer " + token } });
-  if (!r.ok) {
-    alert("Load messages failed: " + (await readError(r)));
-    return;
-  }
+  if (!r.ok) return alert("Load messages failed: " + (await readError(r)));
 
   const j = await r.json();
   nextBeforeId = j.next_before_id;
@@ -894,7 +1010,8 @@ async function uploadSelectedFile() {
     xhr.send(form);
   }).finally(() => {
     hideUpload();
-    if (file) file.value = "";
+    // ✅ очищаем input + плашку выбранного файла
+    clearSelectedFile();
   });
 }
 
@@ -972,7 +1089,7 @@ async function sendMessage() {
 }
 
 /* =========================
-   Wire buttons + stable mobile input
+   Wire buttons
    ========================= */
 
 btnRegister && (btnRegister.onclick = register);
@@ -981,10 +1098,21 @@ btnFind && (btnFind.onclick = search);
 btnReloadDialogs && (btnReloadDialogs.onclick = async () => await loadDialogs());
 btnSend && (btnSend.onclick = () => sendMessage());
 
-if (text) {
-  text.addEventListener("compositionstart", () => {
-    isComposing = true;
+btnLogout && (btnLogout.onclick = logout);
+btnSaveProfile && (btnSaveProfile.onclick = saveProfile);
+
+if (file) {
+  file.addEventListener("change", () => {
+    const f = file.files && file.files[0];
+    showSelectedFileUI(f || null);
   });
+}
+sfRemove && sfRemove.addEventListener("click", () => {
+  clearSelectedFile();
+});
+
+if (text) {
+  text.addEventListener("compositionstart", () => { isComposing = true; });
   text.addEventListener("compositionend", () => {
     isComposing = false;
     saveDraftForCurrentChat();
@@ -992,7 +1120,6 @@ if (text) {
 
   text.addEventListener("input", () => {
     saveDraftForCurrentChat();
-
     if (!ws || ws.readyState !== 1 || !currentChatId) return;
     wsSend({ type: "typing:start", chat_id: currentChatId });
     clearTimeout(typingTimer);
@@ -1011,9 +1138,7 @@ if (text) {
 
   text.addEventListener("focus", () => {
     setTimeout(() => {
-      try {
-        text.scrollIntoView({ block: "center", behavior: "smooth" });
-      } catch (_) {}
+      try { text.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (_) {}
     }, 120);
   });
 }
@@ -1031,12 +1156,21 @@ btnBack &&
   loadPersistedUnread();
   loadPersistedDrafts();
 
+  if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
+
+  // на старте прячем плашку + ревокаем на всякий
+  showSelectedFileUI(null);
+
   if (token) {
     await loadMe();
-    connectWS();
-    await loadDialogs();
+    if (me) {
+      connectWS();
+      await loadDialogs();
+    } else {
+      logout();
+    }
   } else {
-    setMeUI();
+    paintProfile();
   }
 })();
 

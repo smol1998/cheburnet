@@ -183,3 +183,63 @@ def me(
         "avatar_file_id": avatar_file_id,
         "avatar_url": (f"/files/{avatar_file_id}" if avatar_file_id else None),
     }
+
+
+# ✅ NEW: обновление профиля (год рождения + аватар)
+@router.post("/profile_update_form")
+async def profile_update_form(
+    birth_year: int | None = Form(default=None),
+    avatar: UploadFile | None = UpFile(default=None),
+    token: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    t = _extract_token(token, authorization)
+
+    try:
+        payload = decode_token(t)
+        user_id = int(payload.get("sub")) if isinstance(payload, dict) else int(payload)
+    except Exception:
+        raise HTTPException(401, "Invalid token")
+
+    u = db.get(models.User, user_id)
+    if not u:
+        raise HTTPException(401, "User not found")
+
+    # birth_year (если прислали)
+    if birth_year is not None:
+        u.birth_year = birth_year
+
+    # avatar (если прислали)
+    if avatar is not None:
+        if not avatar.content_type or not avatar.content_type.startswith(ALLOWED_AVATAR_PREFIXES):
+            raise HTTPException(400, "Avatar must be image/*")
+
+        data_bytes = await read_upload_bytes(avatar, max_bytes=5 * 1024 * 1024)
+
+        rec = models.File(
+            owner_id=u.id,
+            original_name=avatar.filename or "avatar",
+            mime=avatar.content_type or "application/octet-stream",
+            size=len(data_bytes),
+            data=data_bytes,
+            path=None,
+        )
+        db.add(rec)
+        db.commit()
+        db.refresh(rec)
+
+        u.avatar_file_id = rec.id
+
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+
+    avatar_file_id = getattr(u, "avatar_file_id", None)
+    return {
+        "id": u.id,
+        "username": u.username,
+        "birth_year": u.birth_year,
+        "avatar_file_id": avatar_file_id,
+        "avatar_url": (f"/files/{avatar_file_id}" if avatar_file_id else None),
+    }
