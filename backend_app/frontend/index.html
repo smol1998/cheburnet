@@ -56,9 +56,6 @@
     *{box-sizing:border-box}
     html,body{height:100%}
 
-    /* =========================
-       CLEAN GRADIENT + DITHER (NO BAND)
-       ========================= */
     body{
       margin:0;
       font-family:var(--font);
@@ -71,7 +68,6 @@
       -moz-osx-font-smoothing: grayscale;
     }
 
-    /* чистые лайм-пятна + белый мягкий подсвет */
     body::before{
       content:"";
       position:fixed;
@@ -87,7 +83,6 @@
       pointer-events:none;
     }
 
-    /* анти-бэндинг noise (dither) */
     body::after{
       content:"";
       position:fixed;
@@ -132,7 +127,6 @@
       position:relative;
     }
 
-    /* ====== Readability: мягкий “диммер” под рабочей зоной ====== */
     .shell::before{
       content:"";
       position:absolute;
@@ -145,9 +139,6 @@
       z-index:-1;
     }
 
-    /* =========================
-       LIQUID GLASS CORE
-       ========================= */
     .glassBase{
       background:
         linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.02)),
@@ -162,7 +153,6 @@
       isolation:isolate;
     }
 
-    /* Внутреннее затемнение для читабельности (контраст на фоне яркого градиента) */
     .glassBase .glassInnerDim{
       position:absolute;
       inset:0;
@@ -171,7 +161,6 @@
       z-index:0;
     }
 
-    /* “блик” как iOS (верхний) */
     .glassBase::before{
       content:"";
       position:absolute;
@@ -184,7 +173,6 @@
       z-index:1;
     }
 
-    /* тонкая граница + внутренние “edge highlights” */
     .glassBase::after{
       content:"";
       position:absolute;
@@ -199,7 +187,6 @@
         inset -1px 0 0 rgba(255,255,255,.04);
     }
 
-    /* Liquid shimmer layer (едва заметный “жидкий” перелив) */
     .liquid{
       --shimmerOpacity: .18;
     }
@@ -227,7 +214,6 @@
       animation: liquidFloat 10s ease-in-out infinite;
     }
 
-    /* Hover shimmer sweep */
     .glassBase:hover .hoverSweep{
       opacity:.34;
       transform: translateX(0);
@@ -260,15 +246,11 @@
       100% { transform: translate3d(-2%, -1%, 0) rotate(-2deg); }
     }
 
-    /* уважение prefers-reduced-motion */
     @media (prefers-reduced-motion: reduce){
       .liquid .liquidLayer{ animation:none; }
       .hoverSweep{ transition:none; }
     }
 
-    /* =========================
-       TOPBAR / BRAND
-       ========================= */
     .topbar{
       border-radius:22px;
       padding:10px 12px;
@@ -289,7 +271,6 @@
       position:relative;
       z-index:3;
     }
-    /* FIX LOGO: точка теперь рисуется CSS-ом, чтобы не было "Чебур..net" */
     .brandText{ display:inline-block; }
     .brandDot{
       display:inline-block;
@@ -300,9 +281,7 @@
       color: var(--accent);
       opacity:.96;
     }
-    .brandDot::before{
-      content: ".";
-    }
+    .brandDot::before{ content: "."; }
 
     .tabs{
       display:flex;
@@ -365,9 +344,6 @@
     .page{ display:none; min-height:0; flex:1; }
     .page.active{ display:flex; min-height:0; }
 
-    /* =========================
-       CARDS
-       ========================= */
     .card{
       border:1px solid rgba(255,255,255,.12);
       border-radius:var(--radius);
@@ -525,7 +501,6 @@
       margin-top:2px;
     }
 
-    /* Chats */
     .chatsLayout{
       width:100%;
       display:grid;
@@ -693,7 +668,6 @@
       min-width:0;
     }
 
-    /* Selected file visual */
     .selectedFile{
       grid-column:1 / -1;
       display:flex;
@@ -793,7 +767,20 @@
       font-size:12px;
       color:var(--muted);
       margin-bottom:8px;
+
+      /* ✅ FIX: prevent long strings from breaking layout */
+      min-width:0;
     }
+    /* ✅ FIX: even if something long ends up here, it won't break flex */
+    #uploadName{
+      flex: 1 1 auto;
+      min-width:0;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    #uploadPct{ flex:0 0 auto; }
+
     .progressTrack{
       width:100%;
       height:10px;
@@ -857,7 +844,6 @@
 <body>
   <div class="shell">
 
-    <!-- TOPBAR: liquid glass -->
     <div class="topbar glassBase liquid" style="border-radius:22px;">
       <div class="glassInnerDim"></div>
       <div class="liquidLayer"></div>
@@ -938,7 +924,6 @@
 
           <div class="composer">
 
-            <!-- selected file preview -->
             <div class="selectedFile" id="selectedFile" style="display:none">
               <div class="sfLeft">
                 <div class="sfIcon" id="sfIcon">📎</div>
@@ -988,7 +973,6 @@
 
           <div class="cardBody">
 
-            <!-- AUTH -->
             <div id="authBox">
               <div class="row2">
                 <input id="u" class="input" placeholder="username" />
@@ -1021,7 +1005,6 @@
               </div>
             </div>
 
-            <!-- PROFILE -->
             <div id="profileBox" style="display:none">
               <div class="profileTop">
                 <div class="profileLeft">
@@ -1097,7 +1080,6 @@
 
       window.ui = { setTab, showChatMobile, showListMobile };
 
-      // populate year selects
       const now = new Date().getFullYear();
       const years = [];
       for (let y = now - 10; y >= now - 90; y--) years.push(y);
@@ -1117,7 +1099,6 @@
         pby.appendChild(opt2);
       }
 
-      // preview (register)
       const avatar = document.getElementById('avatar');
       const preview = document.getElementById('avatarPreview');
       avatar.addEventListener('change', () => {
@@ -1127,7 +1108,6 @@
         preview.innerHTML = `<img src="${url}" alt="avatar">`;
       });
 
-      // preview (profile change)
       const av2 = document.getElementById('profileAvatarInput');
       const prev2 = document.getElementById('profileAvatar');
       av2.addEventListener('change', () => {
@@ -1139,6 +1119,6 @@
     })();
   </script>
 
-  <script src="/static/app.js?v=3006"></script>
+  <script src="/static/app.js?v=3007"></script>
 </body>
 </html>

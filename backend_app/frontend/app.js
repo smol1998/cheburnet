@@ -236,21 +236,30 @@ function clearSelectedFileUI({ keepInput = false } = {}) {
   if (sfSub) sfSub.textContent = "—";
 }
 
+/**
+ * ✅ ВАЖНОЕ ИЗМЕНЕНИЕ:
+ * Мы НЕ показываем имя файла вообще.
+ * В sfName пишем только "Видео" / "Фото" / "Файл"
+ */
 function showSelectedFileUI(f) {
   if (!selectedFile || !sfIcon || !sfName || !sfSub) return;
   if (!f) { clearSelectedFileUI(); return; }
 
-  sfName.textContent = f.name || "file";
-  sfSub.textContent = `${fmtBytes(f.size)} • ${f.type || "file"}`;
+  const type = String(f.type || "");
+  const isImg = type.startsWith("image/");
+  const isVid = type.startsWith("video/");
+
+  sfName.textContent = isVid ? "Видео" : isImg ? "Фото" : "Файл";
+  sfSub.textContent = `${fmtBytes(f.size)}${type ? " • " + type : ""}`;
 
   // preview/icon
   sfIcon.textContent = "📎";
   revokeSelectedFileObjectUrl();
 
-  if (f.type && f.type.startsWith("image/")) {
+  if (isImg) {
     selectedFileObjectUrl = URL.createObjectURL(f);
     sfIcon.innerHTML = `<img src="${selectedFileObjectUrl}" alt="preview">`;
-  } else if (f.type && f.type.startsWith("video/")) {
+  } else if (isVid) {
     // Лёгкий визуал (без тяжёлого thumbnail)
     sfIcon.textContent = "🎥";
   } else {
@@ -377,10 +386,8 @@ function setUnread(chatId, val) {
   unreadByChatId.set(cid, !!val);
   savePersistedUnread();
 
-  // если диалог уже есть в DOM — просто рисуем бейдж
   paintUnreadBadge(cid, !!val);
 
-  // если диалога нет в DOM — грузим список, чтобы он появился
   if (!!val && !hasDialogRowInDOM(cid)) {
     scheduleDialogsReload("unread:missing_dialog_row");
   }
@@ -425,10 +432,15 @@ function restoreDraftForChat(chatId) {
    Upload progress helpers
    ========================= */
 
-function showUpload(name) {
+/**
+ * ✅ ВАЖНОЕ ИЗМЕНЕНИЕ:
+ * Мы НЕ выводим имя файла в uploadBar.
+ * Пишем "Uploading…" + (тип/размер), чтобы UI не ломался.
+ */
+function showUpload(fileMetaText) {
   if (!uploadBar) return;
   uploadBar.style.display = "block";
-  if (uploadName) uploadName.textContent = name ? `Uploading: ${name}` : "Uploading…";
+  if (uploadName) uploadName.textContent = fileMetaText ? `Uploading… ${fileMetaText}` : "Uploading…";
   if (uploadPct) uploadPct.textContent = "0%";
   if (uploadFill) uploadFill.style.width = "0%";
   disableSend(true);
@@ -613,19 +625,16 @@ function connectWS() {
 
       const senderId = msg?.sender_id;
 
-      // если диалог реально открыт и видим — рендерим, читаем
       if (isDialogVisible(cid)) {
         if (msg?.id && !document.querySelector(`.msg[data-message-id="${msg.id}"]`)) {
           renderMessage(msg);
         }
         maybeMarkRead();
       } else {
-        // ✅ если это не наше сообщение — показываем NEW
         if (!(me && senderId && senderId === me.id)) {
           setUnread(cid, true);
         }
 
-        // ✅ если это новый чат (его нет в списке) — подгружаем диалоги
         if (!hasDialogRowInDOM(cid)) {
           scheduleDialogsReload("ws:new_message_unknown_dialog");
         }
@@ -831,7 +840,6 @@ async function loadDialogs() {
     })
     .join("");
 
-  // после перерендера — дорисовать все актуальные NEW (на всякий)
   for (const [cid, v] of unreadByChatId.entries()) {
     paintUnreadBadge(cid, v === true);
   }
@@ -1090,7 +1098,10 @@ async function uploadSelectedFile() {
   const f = file && file.files && file.files[0];
   if (!f) return null;
 
-  showUpload(f.name);
+  // ✅ НЕ показываем имя файла вообще
+  const type = String(f.type || "");
+  const meta = `${fmtBytes(f.size)}${type ? " • " + type : ""}`;
+  showUpload(meta);
 
   const form = new FormData();
   form.append("file", f);
@@ -1146,11 +1157,9 @@ async function sendMessage() {
   const msgText = (text.value || "").trim();
   let fileIds = [];
 
-  // если ничего нет — не отправляем
   const hasFile = !!(file && file.files && file.files[0]);
   if (!msgText && !hasFile) return;
 
-  // сначала грузим файл (если есть)
   if (hasFile) {
     try {
       const up = await uploadSelectedFile();
@@ -1161,7 +1170,6 @@ async function sendMessage() {
     }
   }
 
-  // после аплоада могло оказаться что нет ни текста ни файла
   if (!msgText && !fileIds.length) return;
 
   const prevText = text.value || "";
@@ -1232,7 +1240,6 @@ if (file) {
   });
 }
 sfRemove && sfRemove.addEventListener("click", () => {
-  // убираем выбранный файл, но оставляем текст
   clearSelectedFileUI();
 });
 
@@ -1285,7 +1292,6 @@ btnBack &&
 
   if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
 
-  // при старте — если в input уже есть файл (редко), покажем превью
   if (file && file.files && file.files[0]) showSelectedFileUI(file.files[0]);
 
   if (token) {
