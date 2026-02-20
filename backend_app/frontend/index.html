@@ -9,16 +9,26 @@
 
   <style>
     :root{
-      --bg:#070707;
-      --panel:#0f0f10;
-      --panel2:#0b0b0c;
-      --stroke2:rgba(255,255,255,.08);
-      --stroke:rgba(0,255,120,.18);
-      --text:#e9e9e9;
-      --muted:#a6a6a6;
-      --accent:#73ff3b;
-      --accent2:#1cff7d;
-      --shadow:0 10px 30px rgba(0,0,0,.45);
+      /* ===== Palette ===== */
+      --bg:#000000;
+      --accent:#D1FE17;
+
+      /* text */
+      --text:rgba(255,255,255,.94);
+      --muted:rgba(255,255,255,.62);
+
+      /* glass surfaces */
+      --glass:  rgba(18,18,18,.38);
+      --glass2: rgba(12,12,12,.52);
+
+      /* strokes */
+      --stroke2: rgba(255,255,255,.10);
+      --stroke:  rgba(209,254,23,.28);
+
+      /* shadows */
+      --shadow: 0 18px 55px rgba(0,0,0,.62);
+      --shadow2: 0 8px 28px rgba(0,0,0,.55);
+
       --radius:16px;
 
       --gap:12px;
@@ -33,30 +43,71 @@
       --sar: env(safe-area-inset-right, 0px);
       --sab: env(safe-area-inset-bottom, 0px);
       --sal: env(safe-area-inset-left, 0px);
+
+      /* glass tuning */
+      --glassBlur: 26px;
+      --glassSat:  170%;
+      --glassBright: 108%;
+
+      /* readability */
+      --panelDim: rgba(0,0,0,.35);
     }
 
     *{box-sizing:border-box}
     html,body{height:100%}
 
+    /* =========================
+       CLEAN GRADIENT + DITHER (NO BAND)
+       ========================= */
     body{
       margin:0;
       font-family:var(--font);
       color:var(--text);
-      background:
-        radial-gradient(1200px 600px at 20% 0%, rgba(115,255,59,.06), transparent 60%),
-        radial-gradient(900px 500px at 80% 30%, rgba(28,255,125,.05), transparent 55%),
-        var(--bg);
+      background: var(--bg);
       overflow:hidden;
+      position:relative;
+      text-rendering: geometricPrecision;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* чистые лайм-пятна + белый мягкий подсвет */
+    body::before{
+      content:"";
+      position:fixed;
+      inset:-30%;
+      background:
+        radial-gradient(1200px 900px at 14% 10%, rgba(209,254,23,.22), transparent 60%),
+        radial-gradient(1400px 1100px at 88% 18%, rgba(209,254,23,.16), transparent 62%),
+        radial-gradient(1100px 900px at 55% 110%, rgba(209,254,23,.12), transparent 65%),
+        radial-gradient(900px 700px at 55% 45%, rgba(255,255,255,.06), transparent 70%);
+      filter: blur(92px);
+      transform: translateZ(0);
+      z-index:-3;
+      pointer-events:none;
+    }
+
+    /* анти-бэндинг noise (dither) */
+    body::after{
+      content:"";
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      z-index:-2;
+      opacity:.16;
+      mix-blend-mode: overlay;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)' opacity='.26'/%3E%3C/svg%3E");
+      background-size:240px 240px;
     }
 
     .scroll{
       scrollbar-width: thin;
-      scrollbar-color: rgba(115,255,59,.22) rgba(255,255,255,.05);
+      scrollbar-color: rgba(209,254,23,.22) rgba(255,255,255,.05);
     }
     .scroll::-webkit-scrollbar{ width:10px; height:10px; }
     .scroll::-webkit-scrollbar-track{ background: rgba(255,255,255,.05); border-radius: 999px; }
     .scroll::-webkit-scrollbar-thumb{
-      background: rgba(115,255,59,.22);
+      background: rgba(209,254,23,.22);
       border-radius: 999px;
       border: 2px solid rgba(0,0,0,.35);
     }
@@ -78,64 +129,218 @@
       flex-direction:column;
       gap:var(--gap);
       min-height:0;
+      position:relative;
     }
 
+    /* ====== Readability: мягкий “диммер” под рабочей зоной ====== */
+    .shell::before{
+      content:"";
+      position:absolute;
+      inset: 8px;
+      border-radius: 26px;
+      background: radial-gradient(1200px 900px at 50% 40%, rgba(0,0,0,.15), rgba(0,0,0,.38) 60%, rgba(0,0,0,.48));
+      filter: blur(22px);
+      opacity:.85;
+      pointer-events:none;
+      z-index:-1;
+    }
+
+    /* =========================
+       LIQUID GLASS CORE
+       ========================= */
+    .glassBase{
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.02)),
+        var(--glass);
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(var(--glassBlur)) saturate(var(--glassSat)) brightness(var(--glassBright));
+      -webkit-backdrop-filter: blur(var(--glassBlur)) saturate(var(--glassSat)) brightness(var(--glassBright));
+      position:relative;
+      overflow:hidden;
+      transform: translateZ(0);
+      isolation:isolate;
+    }
+
+    /* Внутреннее затемнение для читабельности (контраст на фоне яркого градиента) */
+    .glassBase .glassInnerDim{
+      position:absolute;
+      inset:0;
+      background: linear-gradient(180deg, rgba(0,0,0,.20), rgba(0,0,0,.36));
+      pointer-events:none;
+      z-index:0;
+    }
+
+    /* “блик” как iOS (верхний) */
+    .glassBase::before{
+      content:"";
+      position:absolute;
+      inset:-2px;
+      background:
+        radial-gradient(820px 260px at 20% 0%, rgba(255,255,255,.16), transparent 62%),
+        radial-gradient(720px 260px at 82% 0%, rgba(209,254,23,.12), transparent 64%);
+      pointer-events:none;
+      opacity:.85;
+      z-index:1;
+    }
+
+    /* тонкая граница + внутренние “edge highlights” */
+    .glassBase::after{
+      content:"";
+      position:absolute;
+      inset:0;
+      border-radius: inherit;
+      pointer-events:none;
+      z-index:2;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.16),
+        inset 0 -1px 0 rgba(0,0,0,.45),
+        inset 1px 0 0 rgba(255,255,255,.06),
+        inset -1px 0 0 rgba(255,255,255,.04);
+    }
+
+    /* Liquid shimmer layer (едва заметный “жидкий” перелив) */
+    .liquid{
+      --shimmerOpacity: .18;
+    }
+    .liquid .liquidLayer{
+      position:absolute;
+      inset:-40%;
+      background:
+        conic-gradient(
+          from 210deg at 50% 50%,
+          rgba(209,254,23,.00) 0deg,
+          rgba(209,254,23,.10) 40deg,
+          rgba(255,255,255,.12) 85deg,
+          rgba(209,254,23,.06) 120deg,
+          rgba(255,255,255,.00) 180deg,
+          rgba(209,254,23,.08) 250deg,
+          rgba(255,255,255,.10) 300deg,
+          rgba(209,254,23,.00) 360deg
+        );
+      filter: blur(34px);
+      opacity: var(--shimmerOpacity);
+      mix-blend-mode: screen;
+      pointer-events:none;
+      z-index:1;
+      transform: translateZ(0);
+      animation: liquidFloat 10s ease-in-out infinite;
+    }
+
+    /* Hover shimmer sweep */
+    .glassBase:hover .hoverSweep{
+      opacity:.34;
+      transform: translateX(0);
+    }
+    .hoverSweep{
+      position:absolute;
+      top:-30%;
+      left:-60%;
+      width:140%;
+      height:180%;
+      background:
+        linear-gradient(115deg,
+          rgba(255,255,255,0) 0%,
+          rgba(255,255,255,.09) 30%,
+          rgba(209,254,23,.11) 45%,
+          rgba(255,255,255,.08) 60%,
+          rgba(255,255,255,0) 78%);
+      filter: blur(18px);
+      opacity:0;
+      transform: translateX(-18%);
+      transition: opacity .28s ease, transform .55s ease;
+      pointer-events:none;
+      z-index:1;
+      mix-blend-mode: screen;
+    }
+
+    @keyframes liquidFloat{
+      0%   { transform: translate3d(-2%, -1%, 0) rotate(-2deg); }
+      50%  { transform: translate3d( 2%,  1%, 0) rotate( 2deg); }
+      100% { transform: translate3d(-2%, -1%, 0) rotate(-2deg); }
+    }
+
+    /* уважение prefers-reduced-motion */
+    @media (prefers-reduced-motion: reduce){
+      .liquid .liquidLayer{ animation:none; }
+      .hoverSweep{ transition:none; }
+    }
+
+    /* =========================
+       TOPBAR / BRAND
+       ========================= */
     .topbar{
-      background:rgba(15,15,16,.86);
-      border:1px solid var(--stroke2);
       border-radius:22px;
-      box-shadow:var(--shadow);
-      backdrop-filter: blur(10px);
-      padding:10px;
+      padding:10px 12px;
       display:flex;
       align-items:center;
       justify-content:space-between;
       gap:10px;
     }
+
     .brand{
       display:flex;
       align-items:center;
-      gap:8px;
       font-weight:900;
       color:var(--accent);
       user-select:none;
       white-space:nowrap;
+      letter-spacing:.2px;
+      position:relative;
+      z-index:3;
     }
-    /* ✅ NEW: чтобы "Чебур.net" не разбивалось gap-ом */
+    /* FIX LOGO: точка теперь рисуется CSS-ом, чтобы не было "Чебур..net" */
     .brandText{ display:inline-block; }
+    .brandDot{
+      display:inline-block;
+      width: .34em;
+      text-align:center;
+      position:relative;
+      top:-.02em;
+      color: var(--accent);
+      opacity:.96;
+    }
+    .brandDot::before{
+      content: ".";
+    }
 
     .tabs{
       display:flex;
       gap:8px;
-      background:rgba(255,255,255,.03);
-      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.05);
+      border:1px solid rgba(255,255,255,.12);
       padding:6px;
       border-radius:999px;
       flex:0 0 auto;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      position:relative;
+      z-index:3;
     }
     .tabBtn{
       height:38px;
       padding:0 14px;
       border-radius:999px;
-      border:1px solid rgba(255,255,255,.10);
-      background:rgba(255,255,255,.02);
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.18);
       color:var(--muted);
       font-weight:900;
       cursor:pointer;
     }
     .tabBtn.active{
-      border-color:rgba(115,255,59,.35);
-      color:var(--accent);
-      background:rgba(115,255,59,.08);
-      box-shadow:0 0 0 3px rgba(115,255,59,.08) inset;
+      border-color:rgba(209,254,23,.55);
+      color:#0b0b0b;
+      background:rgba(209,254,23,.94);
+      box-shadow: 0 10px 26px rgba(209,254,23,.12);
     }
+
     .mePill{
       font-size:12px;
       padding:6px 10px;
       border-radius:999px;
-      border:1px solid var(--stroke);
+      border:1px solid rgba(209,254,23,.30);
       color:var(--accent);
-      background:rgba(115,255,59,.06);
+      background:rgba(0,0,0,.22);
       max-width: 320px;
       overflow:hidden;
       text-overflow:ellipsis;
@@ -143,12 +348,16 @@
       display:flex;
       align-items:center;
       gap:8px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      position:relative;
+      z-index:3;
     }
     .meMiniAv{
       width:22px;height:22px;border-radius:999px;overflow:hidden;
       border:1px solid rgba(255,255,255,.14);
       display:inline-flex;align-items:center;justify-content:center;
-      background:rgba(255,255,255,.04);
+      background:rgba(255,255,255,.06);
       flex:0 0 auto;
     }
     .meMiniAv img{width:100%;height:100%;object-fit:cover;display:block}
@@ -156,22 +365,25 @@
     .page{ display:none; min-height:0; flex:1; }
     .page.active{ display:flex; min-height:0; }
 
+    /* =========================
+       CARDS
+       ========================= */
     .card{
-      background:linear-gradient(180deg, rgba(255,255,255,.03), transparent 55%), var(--panel);
-      border:1px solid var(--stroke2);
+      border:1px solid rgba(255,255,255,.12);
       border-radius:var(--radius);
-      box-shadow:var(--shadow);
       overflow:hidden;
+      position:relative;
     }
-
     .cardHeader{
       padding:12px 14px;
-      border-bottom:1px solid var(--stroke2);
+      border-bottom:1px solid rgba(255,255,255,.10);
       display:flex;
       align-items:center;
       justify-content:space-between;
       gap:10px;
       min-height:54px;
+      position:relative;
+      z-index:3;
     }
     .cardTitle{
       font-size:12px;
@@ -179,44 +391,50 @@
       text-transform:uppercase;
       color:var(--muted);
     }
-    .cardBody{ padding:var(--pad); min-height:0; }
+    .cardBody{ padding:var(--pad); min-height:0; position:relative; z-index:3; }
 
     .input{
       width:100%;
       height:var(--inputH);
       border-radius:12px;
-      background:var(--panel2);
-      border:1px solid rgba(255,255,255,.09);
+      background:rgba(0,0,0,.26);
+      border:1px solid rgba(255,255,255,.12);
       color:var(--text);
       padding:0 12px;
       outline:none;
       min-width:0;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
     .input:focus{
-      border-color:rgba(115,255,59,.35);
-      box-shadow:0 0 0 3px rgba(115,255,59,.10);
+      border-color:rgba(209,254,23,.55);
+      box-shadow:0 0 0 3px rgba(209,254,23,.16);
     }
+
     .btn{
       height:var(--btnH);
       border-radius:12px;
-      border:1px solid rgba(115,255,59,.35);
-      background:rgba(115,255,59,.08);
+      border:1px solid rgba(209,254,23,.55);
+      background:rgba(209,254,23,.18);
       color:var(--accent);
       padding:0 14px;
       cursor:pointer;
       font-weight:800;
       white-space:nowrap;
       line-height:1;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
+    .btn:hover{ background:rgba(209,254,23,.24); }
     .btn.secondary{
       border-color:rgba(255,255,255,.14);
       color:var(--text);
-      background:rgba(255,255,255,.04);
+      background:rgba(255,255,255,.05);
     }
     .btn.danger{
-      border-color:rgba(255,90,90,.35);
-      color:#ff8a8a;
-      background:rgba(255,90,90,.08);
+      border-color:rgba(255,90,90,.40);
+      color:#ffb1b1;
+      background:rgba(255,90,90,.10);
     }
     .btn:active{ transform:translateY(1px); }
 
@@ -239,8 +457,8 @@
       width:64px;
       height:64px;
       border-radius:999px;
-      border:1px solid rgba(255,255,255,.12);
-      background:rgba(255,255,255,.04);
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.06);
       overflow:hidden;
       flex:0 0 auto;
       display:flex;
@@ -248,6 +466,8 @@
       justify-content:center;
       color:var(--muted);
       font-weight:900;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
     }
     .avatarPreview img{ width:100%; height:100%; object-fit:cover; display:block; }
 
@@ -261,24 +481,29 @@
       padding:0 12px;
       height:var(--btnH);
       border-radius:12px;
-      border:1px solid rgba(255,255,255,.10);
-      background:rgba(255,255,255,.03);
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.05);
       color:var(--muted);
       cursor:pointer;
       white-space:nowrap;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
     .fileBtn input[type="file"]{ position:absolute; inset:0; opacity:0; cursor:pointer; }
 
-    /* profile card layout */
     .profileTop{
       display:flex;
       align-items:center;
       justify-content:space-between;
       gap:12px;
       padding:12px 14px;
-      border:1px solid rgba(255,255,255,.08);
+      border:1px solid rgba(255,255,255,.12);
       border-radius:16px;
-      background:rgba(255,255,255,.02);
+      background:rgba(255,255,255,.04);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      position:relative;
+      z-index:3;
     }
     .profileLeft{
       display:flex;
@@ -315,14 +540,21 @@
       min-height:0;
     }
     .list{ display:flex; flex-direction:column; gap:8px; }
+
     .item{
       padding:10px 12px;
       border-radius:14px;
-      border:1px solid rgba(255,255,255,.07);
-      background:rgba(255,255,255,.02);
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.04);
       cursor:pointer;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      position:relative;
     }
-    .item:hover{ border-color:rgba(115,255,59,.20); background:rgba(115,255,59,.04); }
+    .item:hover{
+      border-color:rgba(209,254,23,.28);
+      background:rgba(209,254,23,.06);
+    }
     .item small{ color:var(--muted); }
 
     .searchRow{
@@ -344,8 +576,13 @@
       align-items:center;
       justify-content:space-between;
       gap:10px;
-      border-bottom:1px solid var(--stroke2);
+      border-bottom:1px solid rgba(255,255,255,.10);
       min-height:58px;
+      background:rgba(255,255,255,.02);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      position:relative;
+      z-index:3;
     }
     .chatLeft{
       display:flex;
@@ -359,11 +596,13 @@
       padding:0 12px;
       border-radius:12px;
       border:1px solid rgba(255,255,255,.12);
-      background:rgba(255,255,255,.03);
+      background:rgba(255,255,255,.05);
       color:var(--text);
       cursor:pointer;
       font-weight:900;
       flex:0 0 auto;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
     .chatTitle{ font-size:14px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:52vw; }
     .typingText{ font-size:12px; color:var(--muted); min-height:16px; }
@@ -375,9 +614,11 @@
       color:var(--muted);
       font-size:12px;
       flex:0 0 auto;
+      position:relative;
+      z-index:3;
     }
     .dot{ width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,.18); }
-    .dot.online{ background:var(--accent2); box-shadow:0 0 0 3px rgba(28,255,125,.12); }
+    .dot.online{ background:var(--accent); box-shadow:0 0 0 3px rgba(209,254,23,.16); }
 
     .messages{
       flex:1;
@@ -387,6 +628,8 @@
       display:flex;
       flex-direction:column;
       gap:10px;
+      position:relative;
+      z-index:3;
     }
     .loading{
       align-self:center;
@@ -394,23 +637,28 @@
       font-size:12px;
       padding:10px 12px;
       border-radius:999px;
-      border:1px solid rgba(255,255,255,.07);
-      background:rgba(255,255,255,.03);
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.04);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
 
     .msg{
       max-width:76%;
       padding:10px 12px;
       border-radius:14px;
-      border:1px solid rgba(255,255,255,.07);
-      background:rgba(255,255,255,.03);
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.04);
       line-height:1.35;
       word-break:break-word;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      box-shadow: var(--shadow2);
     }
     .msg.me{
       margin-left:auto;
-      border-color:rgba(115,255,59,.22);
-      background:rgba(115,255,59,.06);
+      border-color:rgba(209,254,23,.28);
+      background:rgba(209,254,23,.10);
     }
     .msg small{ color:var(--muted); display:block; margin-top:6px; font-size:11px; }
     .readmark{ opacity:.9; }
@@ -426,11 +674,16 @@
 
     .composer{
       padding:12px;
-      border-top:1px solid var(--stroke2);
+      border-top:1px solid rgba(255,255,255,.10);
       display:grid;
       grid-template-columns: 1fr auto;
       gap:10px;
       align-items:center;
+      background:rgba(255,255,255,.02);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      position:relative;
+      z-index:3;
     }
     .composerLeft{
       display:grid;
@@ -450,12 +703,16 @@
 
       padding:10px 12px;
       border-radius:14px;
-      border:1px solid rgba(255,255,255,.10);
+      border:1px solid rgba(255,255,255,.12);
       background:
-        linear-gradient(180deg, rgba(255,255,255,.03), transparent 60%),
-        rgba(255,255,255,.03);
+        linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.02)),
+        rgba(255,255,255,.04);
 
-      box-shadow: 0 10px 24px rgba(0,0,0,.35);
+      box-shadow: 0 16px 34px rgba(0,0,0,.45);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      position:relative;
+      z-index:3;
     }
     .sfLeft{
       display:flex;
@@ -470,8 +727,8 @@
       display:flex;
       align-items:center;
       justify-content:center;
-      border:1px solid rgba(115,255,59,.25);
-      background:rgba(115,255,59,.08);
+      border:1px solid rgba(209,254,23,.30);
+      background:rgba(209,254,23,.12);
       flex:0 0 auto;
       font-size:18px;
       overflow:hidden;
@@ -494,25 +751,27 @@
     }
     .sfSub{
       font-size:12px;
-      color:rgba(255,255,255,.55);
+      color:rgba(255,255,255,.60);
       margin-top:2px;
     }
     .sfRemove{
       height:34px;
       width:34px;
       border-radius:12px;
-      border:1px solid rgba(255,255,255,.12);
-      background:rgba(255,255,255,.04);
-      color:rgba(255,255,255,.75);
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.05);
+      color:rgba(255,255,255,.78);
       cursor:pointer;
       font-weight:900;
       line-height:1;
       flex:0 0 auto;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
     .sfRemove:hover{
-      border-color:rgba(255,90,90,.35);
+      border-color:rgba(255,90,90,.40);
       color:#ffb0b0;
-      background:rgba(255,90,90,.08);
+      background:rgba(255,90,90,.10);
     }
 
     .uploadBar{
@@ -520,8 +779,12 @@
       grid-column:1 / -1;
       padding:10px 12px;
       border-radius:12px;
-      border:1px solid rgba(255,255,255,.08);
-      background:rgba(255,255,255,.03);
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.04);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      position:relative;
+      z-index:3;
     }
     .uploadTop{
       display:flex;
@@ -535,14 +798,14 @@
       width:100%;
       height:10px;
       border-radius:999px;
-      background:rgba(255,255,255,.06);
+      background:rgba(255,255,255,.08);
       overflow:hidden;
-      border:1px solid rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.08);
     }
     .progressFill{
       height:100%;
       width:0%;
-      background:linear-gradient(90deg, rgba(115,255,59,.55), rgba(28,255,125,.65));
+      background:linear-gradient(90deg, rgba(209,254,23,.62), rgba(209,254,23,.92));
       border-radius:999px;
       transition: width .15s linear;
     }
@@ -553,8 +816,8 @@
       font-weight:900;
       padding:4px 8px;
       border-radius:999px;
-      border:1px solid rgba(115,255,59,.35);
-      background:rgba(115,255,59,.10);
+      border:1px solid rgba(209,254,23,.55);
+      background:rgba(209,254,23,.18);
       color:var(--accent);
     }
 
@@ -594,9 +857,15 @@
 <body>
   <div class="shell">
 
-    <div class="topbar">
-      <!-- ✅ FIX: бренд внутри одного элемента, чтобы gap не разрывал "Чебур.net" -->
-      <div class="brand"><span class="brandText">Чебур<span style="opacity:.9">.</span>net</span></div>
+    <!-- TOPBAR: liquid glass -->
+    <div class="topbar glassBase liquid" style="border-radius:22px;">
+      <div class="glassInnerDim"></div>
+      <div class="liquidLayer"></div>
+      <div class="hoverSweep"></div>
+
+      <div class="brand">
+        <span class="brandText">Чебур<span class="brandDot" aria-hidden="true"></span>net</span>
+      </div>
 
       <div class="tabs" role="tablist" aria-label="Main tabs">
         <button class="tabBtn" id="tabChats" type="button" aria-controls="pageChats" aria-selected="false">Чаты</button>
@@ -611,7 +880,11 @@
 
         <aside class="sidebar scroll">
 
-          <section class="card">
+          <section class="card glassBase liquid">
+            <div class="glassInnerDim"></div>
+            <div class="liquidLayer"></div>
+            <div class="hoverSweep"></div>
+
             <div class="cardHeader">
               <div class="cardTitle">Поиск пользователя</div>
             </div>
@@ -624,7 +897,11 @@
             </div>
           </section>
 
-          <section class="card" style="flex:1; min-height:0;">
+          <section class="card glassBase liquid" style="flex:1; min-height:0;">
+            <div class="glassInnerDim"></div>
+            <div class="liquidLayer"></div>
+            <div class="hoverSweep"></div>
+
             <div class="cardHeader">
               <div class="cardTitle">Диалоги</div>
               <button class="btn secondary" id="btnReloadDialogs" type="button">Reload</button>
@@ -636,7 +913,11 @@
 
         </aside>
 
-        <main class="card chat" id="chatPanel">
+        <main class="card glassBase liquid chat" id="chatPanel">
+          <div class="glassInnerDim"></div>
+          <div class="liquidLayer"></div>
+          <div class="hoverSweep"></div>
+
           <div class="chatHeader">
             <div class="chatLeft">
               <button class="backBtn" id="btnBack" type="button">←</button>
@@ -696,7 +977,11 @@
     <section class="page active" id="pageAccount" role="tabpanel" aria-labelledby="tabAccount">
       <div class="accountWrap scroll" style="overflow:auto;">
 
-        <section class="card">
+        <section class="card glassBase liquid">
+          <div class="glassInnerDim"></div>
+          <div class="liquidLayer"></div>
+          <div class="hoverSweep"></div>
+
           <div class="cardHeader">
             <div class="cardTitle">Аккаунт</div>
           </div>
@@ -854,6 +1139,6 @@
     })();
   </script>
 
-  <script src="/static/app.js?v=3008"></script>
+  <script src="/static/app.js?v=3006"></script>
 </body>
 </html>
