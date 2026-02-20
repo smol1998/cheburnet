@@ -112,13 +112,12 @@ def list_dm(db: Session = Depends(get_db), user=Depends(get_current_user)):
         oid = other_id(c, user.id)
         other = db.get(models.User, oid)
 
-        # ✅ последнее ВХОДЯЩЕЕ (не от меня) сообщение — только оно влияет на NEW
         last_incoming_id = (
-                               db.query(func.max(models.Message.id))
-                               .filter(models.Message.chat_id == c.id)
-                               .filter(models.Message.sender_id != user.id)
-                               .scalar()
-                           ) or 0
+            db.query(func.max(models.Message.id))
+            .filter(models.Message.chat_id == c.id)
+            .filter(models.Message.sender_id != user.id)
+            .scalar()
+        ) or 0
 
         out.append(
             {

@@ -1,7 +1,8 @@
+# backend_app/routers/files.py
 import os
 from io import BytesIO
 from fastapi import APIRouter, Depends, UploadFile, File as UpFile, HTTPException, Query, Header
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 
 from backend_app.deps import get_db, get_current_user
@@ -55,14 +56,55 @@ async def upload(
         original_name=file.filename or "file",
         mime=file.content_type,
         size=size,
-        data=data,
-        path=None,  # больше не пишем на диск
+        data=data,      # ✅ храним bytes в БД
+        path=None,      # ✅ на диск не пишем
     )
     db.add(rec)
     db.commit()
     db.refresh(rec)
 
     return {"file_id": rec.id, "mime": rec.mime, "name": rec.original_name, "size": rec.size}
+
+
+def _extract_user_id_from_token(db: Session, token: str) -> int:
+    try:
+        payload = decode_token(token)
+        user_id = int(payload.get("sub")) if isinstance(payload, dict) else int(payload)
+    except Exception:
+        raise HTTPException(401, "Invalid token")
+
+    user = db.get(models.User, user_id)
+    if not user:
+        raise HTTPException(401, "Invalid token")
+    return user.id
+
+
+def _get_user_id_from_request(
+    db: Session,
+    token_q: str | None,
+    authorization: str | None,
+) -> int | None:
+    """
+    Возвращает user_id если передали токен (query или header),
+    иначе None (для публичных аватарок).
+    """
+    # 1) query token (?token=...)
+    if token_q:
+        return _extract_user_id_from_token(db, token_q)
+
+    # 2) header Authorization: Bearer ...
+    if authorization and authorization.lower().startswith("bearer "):
+        t = authorization.split(" ", 1)[1].strip()
+        if t:
+            return _extract_user_id_from_token(db, t)
+
+    return None
+
+
+def _is_avatar_file(db: Session, file_id: int) -> bool:
+    # если файл используется как аватар у любого юзера — считаем его аватаром
+    u = db.query(models.User).filter(models.User.avatar_file_id == file_id).first()
+    return u is not None
 
 
 def user_can_access_file(db: Session, user_id: int, file_id: int) -> bool:
@@ -74,9 +116,8 @@ def user_can_access_file(db: Session, user_id: int, file_id: int) -> bool:
     if f.owner_id == user_id:
         return True
 
-    # аватар другого пользователя (разрешим видеть всем авторизованным)
-    u = db.query(models.User).filter(models.User.avatar_file_id == file_id).first()
-    if u is not None:
+    # ✅ аватар другого пользователя (разрешим видеть всем авторизованным)
+    if _is_avatar_file(db, file_id):
         return True
 
     # иначе проверяем, прикреплён ли файл в чате, где участвует user
@@ -101,44 +142,52 @@ def download(
     """
     Вариант 1: Authorization: Bearer <token> (fetch/XHR)
     Вариант 2: ?token=... (для <img>/<video>/<a>)
+    Вариант 3: БЕЗ токена — только если это АВАТАР (публичная отдача аватарок)
     """
-    # 1) авторизация через query token
-    user = None
-    if token:
-        try:
-            payload = decode_token(token)
-            # decode_token у тебя может вернуть int или dict
-            user_id = int(payload.get("sub")) if isinstance(payload, dict) else int(payload)
-        except Exception:
-            raise HTTPException(401, "Invalid token")
-        user = db.get(models.User, user_id)
-        if not user:
-            raise HTTPException(401, "Invalid token")
-
-    # 2) авторизация через header
-    if user is None:
-        if not authorization or not authorization.lower().startswith("bearer "):
-            raise HTTPException(401, "Missing token")
-        t = authorization.split(" ", 1)[1].strip()
-        try:
-            payload = decode_token(t)
-            user_id = int(payload.get("sub")) if isinstance(payload, dict) else int(payload)
-        except Exception:
-            raise HTTPException(401, "Invalid token")
-        user = db.get(models.User, user_id)
-        if not user:
-            raise HTTPException(401, "Invalid token")
 
     rec = db.get(models.File, file_id)
     if not rec:
         raise HTTPException(404, "Not found")
 
-    if not user_can_access_file(db, user.id, file_id):
+    # ✅ ПУБЛИЧНАЯ ОТДАЧА АВАТАРОК:
+    # <img> иногда грузится без токена (кэш/переоткрытие/внешний домен).
+    # Поэтому если файл является аватаром — отдаем без авторизации.
+    if _is_avatar_file(db, file_id):
+        return _stream_file(rec)
+
+    # иначе — нужен токен
+    user_id = _get_user_id_from_request(db, token, authorization)
+    if user_id is None:
+        raise HTTPException(401, "Missing token")
+
+    if not user_can_access_file(db, user_id, file_id):
         raise HTTPException(403, "Forbidden")
 
-    bio = BytesIO(rec.data or b"")
+    return _stream_file(rec)
+
+
+def _stream_file(rec: models.File):
+    """
+    Отдаём либо bytes из БД (StreamingResponse),
+    либо файл с диска (FileResponse) если вдруг path используется.
+    """
     headers = {
-        # чтобы браузер корректно сохранял имя
-        "Content-Disposition": f'inline; filename="{rec.original_name}"'
+        "Content-Disposition": f'inline; filename="{rec.original_name or "file"}"',
+        "Cache-Control": "no-store",  # ✅ чтобы аватарки не залипали в кэше
     }
-    return StreamingResponse(bio, media_type=rec.mime, headers=headers)
+
+    # 1) bytes в БД
+    if getattr(rec, "data", None):
+        bio = BytesIO(rec.data or b"")
+        return StreamingResponse(bio, media_type=rec.mime or "application/octet-stream", headers=headers)
+
+    # 2) fallback: path на диске
+    if getattr(rec, "path", None):
+        return FileResponse(
+            rec.path,
+            media_type=rec.mime or "application/octet-stream",
+            filename=rec.original_name or "file",
+            headers=headers,
+        )
+
+    raise HTTPException(500, "File has no data/path")

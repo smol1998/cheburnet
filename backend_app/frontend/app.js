@@ -24,15 +24,15 @@ let otherLastRead = 0;
 let typingTimer = null;
 let pollTimer = null;
 
-let isComposing = false; // IME (моб/восточные раскладки) — чтобы не отправлять в процессе композиции
+let isComposing = false;
 let isSending = false;
 
 // для аватаров/ников и NEW
-const otherByChatId = new Map(); // chatId -> {id, username, avatar_url, avatar_file_id}
+const otherByChatId = new Map();
 
-// unread NEW: храним только “непрочитанные входящие от другого”
-const unreadByChatId = new Map(); // chatId -> true/false
-const draftsByChatId = new Map(); // chatId -> string (черновик текста)
+// unread NEW
+const unreadByChatId = new Map();
+const draftsByChatId = new Map();
 
 /* =========================
    DOM
@@ -43,6 +43,9 @@ const p = document.getElementById("p");
 const q = document.getElementById("q");
 const text = document.getElementById("text");
 const file = document.getElementById("file");
+
+const birthYear = document.getElementById("birthYear");
+const avatarInput = document.getElementById("avatar");
 
 const mePill = document.getElementById("mePill");
 const mePill2 = document.getElementById("mePill2");
@@ -105,14 +108,70 @@ async function readError(r) {
   return txt || `HTTP ${r.status}`;
 }
 
-function fileUrl(pathOrUrl) {
-  if (!pathOrUrl) return "";
-  const sep = pathOrUrl.includes("?") ? "&" : "?";
-  return API + pathOrUrl + (token ? `${sep}token=${encodeURIComponent(token)}` : "");
-}
-
 function escapeHtml(s) {
   return (s || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+/**
+ * Делает URL до файла с добавлением ?token=...
+ * и опциональным cache-bust параметром v=...
+ */
+function fileUrl(pathOrUrl, v = null) {
+  if (!pathOrUrl) return "";
+  const sep1 = pathOrUrl.includes("?") ? "&" : "?";
+  let out = API + pathOrUrl;
+
+  if (token) out += `${sep1}token=${encodeURIComponent(token)}`;
+
+  // cache-bust (важно для <img>, чтобы не держать старый 401/404 в кеше)
+  if (v !== null && v !== undefined && v !== "") {
+    const sep2 = out.includes("?") ? "&" : "?";
+    out += `${sep2}v=${encodeURIComponent(String(v))}`;
+  }
+
+  return out;
+}
+
+/**
+ * Возвращает относительный путь к аватару, если бек не дал avatar_url.
+ */
+function ensureAvatarPath(u) {
+  if (!u) return null;
+  if (u.avatar_url) return u.avatar_url;
+  if (u.avatar_file_id) return `/files/${u.avatar_file_id}`;
+  return null;
+}
+
+/**
+ * Рендер аватара: если URL есть — рисуем img с onerror,
+ * иначе — fallback "?".
+ */
+function renderAvatarSpan(userObj, sizePx = 22) {
+  const path = ensureAvatarPath(userObj);
+  const v = userObj && userObj.avatar_file_id ? userObj.avatar_file_id : Date.now(); // v — сброс кеша
+  const src = path ? fileUrl(path, v) : "";
+
+  const boxStyle =
+    `width:${sizePx}px;height:${sizePx}px;border-radius:999px;` +
+    `overflow:hidden;display:inline-flex;align-items:center;justify-content:center;` +
+    `border:1px solid rgba(255,255,255,.12);flex:0 0 auto;`;
+
+  if (!src) {
+    return `<span style="${boxStyle};color:rgba(255,255,255,.35);font-weight:900;font-size:12px">?</span>`;
+  }
+
+  // onerror → показать fallback
+  // (Важно: часть браузеров кэшируют неудачные загрузки img, v= помогает)
+  return `
+    <span style="${boxStyle}">
+      <img
+        src="${src}"
+        alt="avatar"
+        style="width:100%;height:100%;object-fit:cover;display:block"
+        onerror="this.onerror=null; this.parentElement.innerHTML='?'; this.parentElement.style.color='rgba(255,255,255,.35)'; this.parentElement.style.fontWeight='900'; this.parentElement.style.fontSize='12px'; this.parentElement.style.display='inline-flex'; this.parentElement.style.alignItems='center'; this.parentElement.style.justifyContent='center';"
+      />
+    </span>
+  `;
 }
 
 function isNearBottom() {
@@ -232,25 +291,56 @@ function hideUpload() {
    ========================= */
 
 async function register() {
-  const username = u.value.trim();
-  const password = p.value.trim();
+  // ✅ регистрация через multipart/form-data
+  const username = (u.value || "").trim();
+  const password = (p.value || "").trim();
+  const by = birthYear ? (birthYear.value || "").trim() : "";
+  const av = avatarInput && avatarInput.files ? avatarInput.files[0] : null;
 
-  const r = await fetch(API + "/auth/register", {
+  if (!username || !password) {
+    alert("Введите username и password");
+    return;
+  }
+
+  const form = new FormData();
+  form.append("username", username);
+  form.append("password", password);
+  if (by) form.append("birth_year", by);
+  if (av) form.append("avatar", av);
+
+  const r = await fetch(API + "/auth/register_form", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: form,
   });
 
   if (!r.ok) {
     alert("Register failed: " + (await readError(r)));
     return;
   }
-  alert("Registered. Now login.");
+
+  const j = await r.json();
+
+  // ✅ авто-логин
+  if (j && j.access_token) {
+    token = j.access_token;
+    localStorage.setItem("token", token);
+
+    await loadMe();
+    connectWS();
+    await loadDialogs();
+
+    // чтобы сразу увидеть — переключим на чаты
+    if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("chats");
+
+    alert("Registered & logged in ✅");
+  } else {
+    alert("Registered. Now login.");
+  }
 }
 
 async function login() {
-  const username = u.value.trim();
-  const password = p.value.trim();
+  const username = (u.value || "").trim();
+  const password = (p.value || "").trim();
 
   const r = await fetch(API + "/auth/login", {
     method: "POST",
@@ -270,6 +360,8 @@ async function login() {
   await loadMe();
   connectWS();
   await loadDialogs();
+
+  if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("chats");
 }
 
 async function loadMe() {
@@ -289,7 +381,7 @@ async function loadMe() {
 
 function scheduleReconnect() {
   if (wsReconnectTimer) return;
-  const delay = Math.min(8000, 800 * Math.pow(1.6, wsRetry)); // экспонента
+  const delay = Math.min(8000, 800 * Math.pow(1.6, wsRetry));
   wsReconnectTimer = setTimeout(() => {
     wsReconnectTimer = null;
     wsRetry++;
@@ -309,21 +401,14 @@ function connectWS() {
 
   ws.onopen = () => {
     wsRetry = 0;
-    console.log("ws connected");
-
-    // если чат открыт — пересабскрайбнем presence
     if (currentChatId) wsSend({ type: "presence:subscribe", chat_id: currentChatId });
-
-    // если был включен поллинг из-за offline — можно оставить, но он сам “умный” (работает когда ws не открыт)
   };
 
   ws.onclose = () => {
-    console.log("ws closed");
     scheduleReconnect();
   };
 
-  ws.onerror = (e) => {
-    console.log("ws error", e);
+  ws.onerror = () => {
     try {
       ws.close();
     } catch (_) {}
@@ -341,18 +426,14 @@ function connectWS() {
       const cid = data.chat_id;
       const msg = data.message;
 
-      // 1) текущий чат — показать сразу
       if (cid === currentChatId) {
         if (msg?.id && !document.querySelector(`.msg[data-message-id="${msg.id}"]`)) {
           renderMessage(msg);
         }
         maybeMarkRead();
       } else {
-        // 2) другие чаты — NEW только если сообщение НЕ от меня
         const senderId = msg?.sender_id;
-        if (me && senderId && senderId === me.id) {
-          // мое сообщение в другом чате — НЕ ставим NEW
-        } else {
+        if (!(me && senderId && senderId === me.id)) {
           setUnread(cid, true);
         }
       }
@@ -392,12 +473,9 @@ function startChatPoll() {
   stopChatPoll();
   pollTimer = setInterval(async () => {
     if (!token || !currentChatId) return;
-    // если WS жив — поллинг не нужен
     if (ws && ws.readyState === 1) return;
 
     const lastId = getLastRenderedMessageId();
-
-    // берём последние 50 и добавляем только новые (id > lastId)
     const url = new URL(API + `/chats/dm/${currentChatId}/messages`, location.origin);
     url.searchParams.set("limit", "50");
 
@@ -417,9 +495,7 @@ function startChatPoll() {
 
       updateReadMarks();
       await maybeMarkRead();
-    } catch (_) {
-      // ignore
-    }
+    } catch (_) {}
   }, 2500);
 }
 
@@ -434,7 +510,7 @@ function stopChatPoll() {
 
 async function search() {
   if (!token) return alert("Login first");
-  const query = q.value.trim();
+  const query = (q.value || "").trim();
 
   const r = await fetch(API + `/users/search?q=${encodeURIComponent(query)}`, {
     headers: { Authorization: "Bearer " + token },
@@ -470,6 +546,7 @@ async function startDM(otherId, username) {
   const j = await r.json();
 
   if (j.with && j.chat_id) {
+    // ✅ сохраняем аватар/ник в map
     otherByChatId.set(j.chat_id, j.with);
   }
 
@@ -511,16 +588,11 @@ async function loadDialogs() {
 
       if (d.chat_id && other) otherByChatId.set(d.chat_id, other);
 
-      // ✅ ВАЖНО: НЕ пересчитываем unread из бэка (там нет last_message_id),
-      // иначе получаются ложные NEW после Reload.
       const hasUnread = unreadByChatId.get(d.chat_id) === true;
-
       const safeName = String(other.username || "").replaceAll("'", "");
 
-      const avUrl = other.avatar_url ? fileUrl(other.avatar_url) : "";
-      const av = avUrl
-        ? `<span style="width:22px;height:22px;border-radius:999px;overflow:hidden;display:inline-flex;border:1px solid rgba(255,255,255,.12)"><img src="${avUrl}" style="width:100%;height:100%;object-fit:cover" /></span>`
-        : `<span style="width:22px;height:22px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.35);font-weight:900;font-size:12px">?</span>`;
+      // ✅ аватар: берём avatar_url ИЛИ строим из avatar_file_id
+      const av = renderAvatarSpan(other, 22);
 
       return `<div class="item" data-chatid="${d.chat_id}" onclick="openChat(${d.chat_id}, ${other.id}, '${safeName}')">
         <div class="dialogRow" style="display:flex;align-items:center;gap:8px">
@@ -540,7 +612,6 @@ async function loadDialogs() {
    ========================= */
 
 async function openChat(chatId, otherId, title) {
-  // сохранить черновик предыдущего чата
   saveDraftForCurrentChat();
 
   currentChatId = chatId;
@@ -548,26 +619,20 @@ async function openChat(chatId, otherId, title) {
   nextBeforeId = null;
   otherLastRead = 0;
 
-  // снять NEW при открытии
   setUnread(chatId, false);
-
-  // восстановить черновик
   restoreDraftForChat(chatId);
 
-  // шапка: аватар + ник
-  const other = otherByChatId.get(chatId) || { id: otherId, username: title, avatar_url: null };
+  const other = otherByChatId.get(chatId) || { id: otherId, username: title, avatar_url: null, avatar_file_id: null };
   const username = other?.username || title || "—";
-  const avUrl = other?.avatar_url ? fileUrl(other.avatar_url) : "";
+
+  // ✅ аватар в шапке — тоже через общий рендер
+  const av = renderAvatarSpan(other, 30);
 
   if (chatTitle) {
-    chatTitle.innerHTML = avUrl
-      ? `<span style="display:flex;align-items:center;gap:10px;min-width:0">
-           <span style="width:30px;height:30px;border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.14);flex:0 0 auto">
-             <img src="${avUrl}" alt="avatar" style="width:100%;height:100%;object-fit:cover;display:block" />
-           </span>
-           <span style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">@${escapeHtml(username)}</span>
-         </span>`
-      : `@${escapeHtml(username)}`;
+    chatTitle.innerHTML = `<span style="display:flex;align-items:center;gap:10px;min-width:0">
+      ${av}
+      <span style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">@${escapeHtml(username)}</span>
+    </span>`;
   }
 
   setTypingUI("");
@@ -591,10 +656,7 @@ async function openChat(chatId, otherId, title) {
     await maybeMarkRead();
   };
 
-  // mobile: открыть экран чата
   if (window.ui && typeof window.ui.showChatMobile === "function") window.ui.showChatMobile();
-
-  // поллинг (на случай если WS отвалился на мобиле/сети)
   startChatPoll();
 }
 
@@ -643,7 +705,7 @@ function renderAttachments(atts) {
     `<div class="attachment">` +
     atts
       .map((a) => {
-        const url = fileUrl(a.url);
+        const url = fileUrl(a.url, a.id || Date.now());
         if (a.mime && a.mime.startsWith("image/")) {
           return `<div><img src="${url}" alt="${escapeHtml(a.name || "image")}" /></div>`;
         }
@@ -669,7 +731,6 @@ const _mskFmt = new Intl.DateTimeFormat("ru-RU", {
 function _parseServerISO(iso) {
   if (!iso) return null;
   let s = String(iso).trim();
-  // backend sends naive UTC like "2026-02-19T12:34:56.123456" (no timezone)
   if (!/[zZ]$/.test(s) && !/[+-]\d\d:\d\d$/.test(s)) s += "Z";
   const d = new Date(s);
   return Number.isFinite(d.getTime()) ? d : null;
@@ -678,7 +739,7 @@ function _parseServerISO(iso) {
 function formatTimeMSK(iso) {
   const d = _parseServerISO(iso);
   if (!d) return "";
-  return _mskFmt.format(d); // "14:47"
+  return _mskFmt.format(d);
 }
 
 function _setMetaVisible(node, visible) {
@@ -687,7 +748,6 @@ function _setMetaVisible(node, visible) {
   meta.style.display = visible ? "flex" : "none";
 }
 
-// Telegram-like: meta only on the LAST message of a short run
 function applyGroupingAll() {
   const nodes = Array.from(msgs.querySelectorAll(".msg[data-message-id]"));
   nodes.forEach((n) => _setMetaVisible(n, true));
@@ -789,7 +849,6 @@ async function maybeMarkRead() {
       headers: authHeadersJson(),
       body: JSON.stringify({ last_read_message_id: lastId }),
     });
-    // прочитали — убрать NEW
     setUnread(currentChatId, false);
   } catch (_) {}
 }
@@ -868,7 +927,6 @@ async function sendMessage() {
 
   if (!msgText && !fileIds.length) return;
 
-  // локально сохраняем черновик (перед очисткой) на случай ошибки сети
   const prevText = text.value || "";
   text.value = "";
   saveDraftForCurrentChat();
@@ -883,8 +941,7 @@ async function sendMessage() {
       headers: authHeadersJson(),
       body: JSON.stringify({ text: msgText || null, file_ids: fileIds }),
     });
-  } catch (e) {
-    // вернуть текст при фейле (важно для мобилы)
+  } catch (_) {
     text.value = prevText;
     saveDraftForCurrentChat();
     isSending = false;
@@ -903,7 +960,6 @@ async function sendMessage() {
     return;
   }
 
-  // Показать сразу, если WS тормозит. Дубликаты режем по id.
   try {
     const msg = await r.json();
     if (msg && msg.id && !document.querySelector(`.msg[data-message-id="${msg.id}"]`)) {
@@ -912,7 +968,6 @@ async function sendMessage() {
     await maybeMarkRead();
   } catch (_) {}
 
-  // после успешной отправки — NEW точно не ставим себе
   setUnread(currentChatId, false);
 }
 
@@ -923,14 +978,9 @@ async function sendMessage() {
 btnRegister && (btnRegister.onclick = register);
 btnLogin && (btnLogin.onclick = login);
 btnFind && (btnFind.onclick = search);
-btnReloadDialogs &&
-  (btnReloadDialogs.onclick = async () => {
-    // reload не должен “внезапно” ставить NEW — мы берем unread только из local state
-    await loadDialogs();
-  });
+btnReloadDialogs && (btnReloadDialogs.onclick = async () => await loadDialogs());
 btnSend && (btnSend.onclick = () => sendMessage());
 
-// Важно для мобил/IME: composition events
 if (text) {
   text.addEventListener("compositionstart", () => {
     isComposing = true;
@@ -940,11 +990,9 @@ if (text) {
     saveDraftForCurrentChat();
   });
 
-  // сохраняем черновик стабильно
   text.addEventListener("input", () => {
     saveDraftForCurrentChat();
 
-    // typing only when ws open and chat selected
     if (!ws || ws.readyState !== 1 || !currentChatId) return;
     wsSend({ type: "typing:start", chat_id: currentChatId });
     clearTimeout(typingTimer);
@@ -953,7 +1001,6 @@ if (text) {
     }, 900);
   });
 
-  // Enter to send (не во время композиции)
   text.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       if (isComposing) return;
@@ -962,7 +1009,6 @@ if (text) {
     }
   });
 
-  // мобильный фикс: при фокусе держим ввод видимым
   text.addEventListener("focus", () => {
     setTimeout(() => {
       try {
@@ -994,6 +1040,5 @@ btnBack &&
   }
 })();
 
-// Expose functions for onclick handlers in HTML
 window.startDM = startDM;
 window.openChat = openChat;

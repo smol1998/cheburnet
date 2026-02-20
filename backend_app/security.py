@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Dict
 
 from jose import jwt
 from passlib.context import CryptContext
@@ -44,6 +44,28 @@ def create_token(user_id: int) -> str:
     expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {"sub": str(user_id), "exp": expire}
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+# ✅ ДОБАВЛЕНО: совместимость с кодом, который ожидает create_access_token(payload)
+def create_access_token(payload: Dict[str, Any]) -> str:
+    """
+    Принимает payload вида {"sub": "..."} и создаёт JWT.
+    Если payload["sub"] не int — приводим аккуратно.
+    """
+    sub = payload.get("sub")
+    try:
+        user_id = int(sub)
+    except Exception:
+        # если пришло что-то странное — оставим как строку, но токен всё равно выдадим
+        # (decode_token вернёт sub как строку)
+        user_id = int(str(sub)) if str(sub).isdigit() else 0
+
+    # используем твою же логику expiry и секретов
+    expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
+    data = dict(payload)
+    data["sub"] = str(user_id) if user_id else str(payload.get("sub"))
+    data["exp"] = expire
+    return jwt.encode(data, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
 def decode_token(token: str) -> Any:
