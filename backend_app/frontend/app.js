@@ -34,6 +34,10 @@ const otherByChatId = new Map();
 const unreadByChatId = new Map();
 const draftsByChatId = new Map();
 
+// debounce reload dialogs (важно для first-time chats)
+let dialogsReloadTimer = null;
+let dialogsReloadInFlight = false;
+
 /* =========================
    DOM
    ========================= */
@@ -81,15 +85,9 @@ const uploadFill = document.getElementById("uploadFill");
 
 const btnBack = document.getElementById("btnBack");
 
-// Selected file UI
-const selectedFile = document.getElementById("selectedFile");
-const sfIcon = document.getElementById("sfIcon");
-const sfName = document.getElementById("sfName");
-const sfSub = document.getElementById("sfSub");
-const sfRemove = document.getElementById("sfRemove");
-
-// ✅ чтобы не текло: держим objectURL
-let selectedPreviewUrl = null;
+// tabs/pages layout (важно для фикса read/new)
+const pageChats = document.getElementById("pageChats");
+const chatsLayout = document.getElementById("chatsLayout");
 
 /* =========================
    Helpers
@@ -113,6 +111,22 @@ async function readError(r) {
   return txt || `HTTP ${r.status}`;
 }
 
+/** ✅ нормализуем chat_id к Number везде */
+function normChatId(x) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+
+function hasDialogRowInDOM(chatId) {
+  const cid = normChatId(chatId);
+  if (!cid) return false;
+  return !!document.querySelector(`.item[data-chatid="${cid}"]`);
+}
+
+/**
+ * Делает URL до файла с добавлением ?token=...
+ * и опциональным cache-bust параметром v=...
+ */
 function fileUrl(pathOrUrl, v = null) {
   if (!pathOrUrl) return "";
   const sep1 = pathOrUrl.includes("?") ? "&" : "?";
@@ -134,6 +148,55 @@ function ensureAvatarPath(uobj) {
   if (uobj.avatar_file_id) return `/files/${uobj.avatar_file_id}`;
   return null;
 }
+
+/* =========================
+   ✅ VISIBILITY FIX (важно!)
+   ========================= */
+
+function isChatsTabActive() {
+  return !!(pageChats && pageChats.classList.contains("active"));
+}
+
+function isChatVisibleOnScreen() {
+  if (!isChatsTabActive()) return false;
+
+  const isMobile = window.matchMedia && window.matchMedia("(max-width:980px)").matches;
+  if (!isMobile) return true;
+
+  return !!(chatsLayout && chatsLayout.classList.contains("chats-open-chat"));
+}
+
+function isDialogVisible(chatId) {
+  const cid = normChatId(chatId);
+  return !!(cid && currentChatId === cid && isChatVisibleOnScreen());
+}
+
+/* =========================
+   Debounced dialogs reload
+   ========================= */
+
+function scheduleDialogsReload(reason = "") {
+  if (!token) return;
+  if (dialogsReloadTimer) return;
+
+  dialogsReloadTimer = setTimeout(async () => {
+    dialogsReloadTimer = null;
+    if (dialogsReloadInFlight) return;
+
+    dialogsReloadInFlight = true;
+    try {
+      await loadDialogs();
+    } catch (_) {
+      // ignore
+    } finally {
+      dialogsReloadInFlight = false;
+    }
+  }, 300);
+}
+
+/* =========================
+   Mini pill
+   ========================= */
 
 function renderMiniMePill() {
   if (!mePill) return;
@@ -178,74 +241,6 @@ function disableSend(disabled) {
   if (!btnSend) return;
   btnSend.disabled = !!disabled;
   btnSend.style.opacity = disabled ? "0.7" : "1";
-}
-
-/* =========================
-   Selected file UI (thumb)
-   ========================= */
-
-function fmtBytes(n) {
-  const v = Number(n || 0);
-  if (!v) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let i = 0;
-  let x = v;
-  while (x >= 1024 && i < units.length - 1) { x /= 1024; i++; }
-  const num = i === 0 ? String(Math.round(x)) : String(Math.round(x * 10) / 10);
-  return `${num} ${units[i]}`;
-}
-
-function pickFileIcon(mime, name) {
-  const m = String(mime || "").toLowerCase();
-  const n = String(name || "").toLowerCase();
-  if (m.startsWith("image/")) return "🖼️";
-  if (m.startsWith("video/")) return "🎬";
-  if (m.startsWith("audio/")) return "🎵";
-  if (n.endsWith(".pdf")) return "📄";
-  if (n.endsWith(".zip") || n.endsWith(".rar") || n.endsWith(".7z")) return "🗜️";
-  return "📎";
-}
-
-function revokeSelectedPreviewUrl() {
-  if (selectedPreviewUrl) {
-    try { URL.revokeObjectURL(selectedPreviewUrl); } catch (_) {}
-    selectedPreviewUrl = null;
-  }
-}
-
-function showSelectedFileUI(f) {
-  if (!selectedFile) return;
-
-  if (!f) {
-    selectedFile.style.display = "none";
-    revokeSelectedPreviewUrl();
-    if (sfIcon) sfIcon.textContent = "📎";
-    if (sfName) sfName.textContent = "";
-    if (sfSub) sfSub.textContent = "";
-    return;
-  }
-
-  selectedFile.style.display = "flex";
-
-  if (sfName) sfName.textContent = f.name || "file";
-  if (sfSub) sfSub.textContent = `${fmtBytes(f.size)} • ${f.type || "unknown"}`;
-
-  // ✅ thumb only for image/*
-  const isImg = String(f.type || "").toLowerCase().startsWith("image/");
-  if (sfIcon) {
-    revokeSelectedPreviewUrl();
-    if (isImg) {
-      selectedPreviewUrl = URL.createObjectURL(f);
-      sfIcon.innerHTML = `<img src="${selectedPreviewUrl}" alt="preview">`;
-    } else {
-      sfIcon.textContent = pickFileIcon(f.type, f.name);
-    }
-  }
-}
-
-function clearSelectedFile() {
-  if (file) file.value = "";
-  showSelectedFileUI(null);
 }
 
 /* =========================
@@ -296,8 +291,8 @@ function loadPersistedUnread() {
     const obj = JSON.parse(raw);
     if (!obj || typeof obj !== "object") return;
     for (const [k, v] of Object.entries(obj)) {
-      const cid = parseInt(k, 10);
-      if (Number.isFinite(cid)) unreadByChatId.set(cid, !!v);
+      const cid = normChatId(k);
+      if (cid) unreadByChatId.set(cid, !!v);
     }
   } catch (_) {}
 }
@@ -311,11 +306,18 @@ function savePersistedUnread() {
 }
 
 function setUnread(chatId, val) {
-  const cid = Number(chatId);
-  if (!Number.isFinite(cid)) return;
+  const cid = normChatId(chatId);
+  if (!cid) return;
   unreadByChatId.set(cid, !!val);
   savePersistedUnread();
+
+  // если диалог уже есть в DOM — просто рисуем бейдж
   paintUnreadBadge(cid, !!val);
+
+  // если диалога нет в DOM — грузим список, чтобы он появился
+  if (!!val && !hasDialogRowInDOM(cid)) {
+    scheduleDialogsReload("unread:missing_dialog_row");
+  }
 }
 
 function loadPersistedDrafts() {
@@ -325,8 +327,8 @@ function loadPersistedDrafts() {
     const obj = JSON.parse(raw);
     if (!obj || typeof obj !== "object") return;
     for (const [k, v] of Object.entries(obj)) {
-      const cid = parseInt(k, 10);
-      if (Number.isFinite(cid) && typeof v === "string") draftsByChatId.set(cid, v);
+      const cid = normChatId(k);
+      if (cid && typeof v === "string") draftsByChatId.set(cid, v);
     }
   } catch (_) {}
 }
@@ -347,7 +349,9 @@ function saveDraftForCurrentChat() {
 
 function restoreDraftForChat(chatId) {
   if (!text) return;
-  const v = draftsByChatId.get(chatId) || "";
+  const cid = normChatId(chatId);
+  if (!cid) return;
+  const v = draftsByChatId.get(cid) || "";
   text.value = v;
 }
 
@@ -534,34 +538,58 @@ function connectWS() {
     try { data = JSON.parse(ev.data); } catch (_) { return; }
 
     if (data.type === "message:new") {
-      const cid = data.chat_id;
+      const cid = normChatId(data.chat_id);
       const msg = data.message;
+      if (!cid || !msg) return;
 
-      if (cid === currentChatId) {
+      const senderId = msg?.sender_id;
+
+      // если диалог реально открыт и видим — рендерим, читаем
+      if (isDialogVisible(cid)) {
         if (msg?.id && !document.querySelector(`.msg[data-message-id="${msg.id}"]`)) {
           renderMessage(msg);
         }
         maybeMarkRead();
       } else {
-        const senderId = msg?.sender_id;
-        if (!(me && senderId && senderId === me.id)) setUnread(cid, true);
+        // ✅ если это не наше сообщение — показываем NEW
+        if (!(me && senderId && senderId === me.id)) {
+          setUnread(cid, true);
+        }
+
+        // ✅ если это новый чат (его нет в списке) — подгружаем диалоги
+        if (!hasDialogRowInDOM(cid)) {
+          scheduleDialogsReload("ws:new_message_unknown_dialog");
+        }
       }
     }
 
-    if (data.type === "presence:state" && data.chat_id === currentChatId && data.user_id === currentOtherId) {
-      setOnlineUI(!!data.online);
+    if (data.type === "presence:state") {
+      const cid = normChatId(data.chat_id);
+      if (cid && cid === currentChatId && data.user_id === currentOtherId) {
+        if (isDialogVisible(currentChatId)) setOnlineUI(!!data.online);
+      }
     }
 
-    if (data.type === "typing:start" && data.chat_id === currentChatId) {
-      setTypingUI("typing…");
-      clearTimeout(typingTimer);
-      typingTimer = setTimeout(() => setTypingUI(""), 2000);
+    if (data.type === "typing:start") {
+      const cid = normChatId(data.chat_id);
+      if (cid && cid === currentChatId && isDialogVisible(currentChatId)) {
+        setTypingUI("typing…");
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(() => setTypingUI(""), 2000);
+      }
     }
-    if (data.type === "typing:stop" && data.chat_id === currentChatId) setTypingUI("");
 
-    if (data.type === "message:read" && data.chat_id === currentChatId) {
-      otherLastRead = Math.max(otherLastRead, data.last_read_message_id || 0);
-      updateReadMarks();
+    if (data.type === "typing:stop") {
+      const cid = normChatId(data.chat_id);
+      if (cid && cid === currentChatId && isDialogVisible(currentChatId)) setTypingUI("");
+    }
+
+    if (data.type === "message:read") {
+      const cid = normChatId(data.chat_id);
+      if (cid && cid === currentChatId) {
+        otherLastRead = Math.max(otherLastRead, data.last_read_message_id || 0);
+        updateReadMarks();
+      }
     }
   };
 }
@@ -593,8 +621,10 @@ function startChatPoll() {
 
       const items = j.items || [];
       for (const m of items) {
-        if (m?.id && m.id > lastId && !document.querySelector(`.msg[data-message-id="${m.id}"]`)) {
-          renderMessage(m);
+        if (isDialogVisible(currentChatId)) {
+          if (m?.id && m.id > lastId && !document.querySelector(`.msg[data-message-id="${m.id}"]`)) {
+            renderMessage(m);
+          }
         }
       }
 
@@ -673,15 +703,19 @@ async function startDM(otherId, username) {
   if (!r.ok) return alert("Start DM failed: " + (await readError(r)));
 
   const j = await r.json();
+  const cid = normChatId(j.chat_id);
 
-  if (j.with && j.chat_id) otherByChatId.set(j.chat_id, j.with);
+  if (j.with && cid) otherByChatId.set(cid, j.with);
 
   await loadDialogs();
-  openChat(j.chat_id, otherId, username);
+  if (cid) openChat(cid, otherId, username);
 }
 
 function paintUnreadBadge(chatId, show) {
-  const el = document.querySelector(`.item[data-chatid="${chatId}"]`);
+  const cid = normChatId(chatId);
+  if (!cid) return;
+
+  const el = document.querySelector(`.item[data-chatid="${cid}"]`);
   if (!el) return;
 
   const row = el.querySelector(".dialogRow");
@@ -705,27 +739,33 @@ async function loadDialogs() {
 
   dialogs.innerHTML = list
     .map((d) => {
+      const cid = normChatId(d.chat_id);
       const other = d.other || {};
       const online = d.other_online ? "online" : "";
 
-      if (d.chat_id && other) otherByChatId.set(d.chat_id, other);
+      if (cid && other) otherByChatId.set(cid, other);
 
-      const hasUnread = unreadByChatId.get(d.chat_id) === true;
+      const hasUnread = cid ? unreadByChatId.get(cid) === true : false;
       const safeName = String(other.username || "").replaceAll("'", "");
 
       const av = renderAvatarSpan(other, 22);
 
-      return `<div class="item" data-chatid="${d.chat_id}" onclick="openChat(${d.chat_id}, ${other.id}, '${safeName}')">
+      return `<div class="item" data-chatid="${cid ?? ""}" onclick="openChat(${cid}, ${other.id}, '${safeName}')">
         <div class="dialogRow" style="display:flex;align-items:center;gap:8px">
           <span class="dot ${online}"></span>
           ${av}
           <div style="font-weight:600">@${escapeHtml(other.username || "")}</div>
           ${hasUnread ? `<span class="unreadBadge">NEW</span>` : ``}
         </div>
-        <small>chat_id: ${d.chat_id}</small>
+        <small>chat_id: ${cid ?? "—"}</small>
       </div>`;
     })
     .join("");
+
+  // после перерендера — дорисовать все актуальные NEW (на всякий)
+  for (const [cid, v] of unreadByChatId.entries()) {
+    paintUnreadBadge(cid, v === true);
+  }
 }
 
 /* =========================
@@ -733,17 +773,20 @@ async function loadDialogs() {
    ========================= */
 
 async function openChat(chatId, otherId, title) {
+  const cid = normChatId(chatId);
+  if (!cid) return;
+
   saveDraftForCurrentChat();
 
-  currentChatId = chatId;
+  currentChatId = cid;
   currentOtherId = otherId;
   nextBeforeId = null;
   otherLastRead = 0;
 
-  setUnread(chatId, false);
-  restoreDraftForChat(chatId);
+  setUnread(cid, false);
+  restoreDraftForChat(cid);
 
-  const other = otherByChatId.get(chatId) || { id: otherId, username: title, avatar_url: null, avatar_file_id: null };
+  const other = otherByChatId.get(cid) || { id: otherId, username: title, avatar_url: null, avatar_file_id: null };
   const username = other?.username || title || "—";
   const av = renderAvatarSpan(other, 30);
 
@@ -759,7 +802,7 @@ async function openChat(chatId, otherId, title) {
 
   msgs.innerHTML = `<div class="loading">Loading…</div>`;
 
-  wsSend({ type: "presence:subscribe", chat_id: chatId });
+  wsSend({ type: "presence:subscribe", chat_id: cid });
 
   await loadMessagesPage();
 
@@ -954,6 +997,7 @@ function updateReadMarks() {
 
 async function maybeMarkRead() {
   if (!currentChatId || !me) return;
+  if (!isDialogVisible(currentChatId)) return;
   if (!isNearBottom()) return;
 
   const lastId = getLastRenderedMessageId();
@@ -1010,8 +1054,7 @@ async function uploadSelectedFile() {
     xhr.send(form);
   }).finally(() => {
     hideUpload();
-    // ✅ очищаем input + плашку выбранного файла
-    clearSelectedFile();
+    if (file) file.value = "";
   });
 }
 
@@ -1101,16 +1144,6 @@ btnSend && (btnSend.onclick = () => sendMessage());
 btnLogout && (btnLogout.onclick = logout);
 btnSaveProfile && (btnSaveProfile.onclick = saveProfile);
 
-if (file) {
-  file.addEventListener("change", () => {
-    const f = file.files && file.files[0];
-    showSelectedFileUI(f || null);
-  });
-}
-sfRemove && sfRemove.addEventListener("click", () => {
-  clearSelectedFile();
-});
-
 if (text) {
   text.addEventListener("compositionstart", () => { isComposing = true; });
   text.addEventListener("compositionend", () => {
@@ -1121,6 +1154,8 @@ if (text) {
   text.addEventListener("input", () => {
     saveDraftForCurrentChat();
     if (!ws || ws.readyState !== 1 || !currentChatId) return;
+    if (!isDialogVisible(currentChatId)) return;
+
     wsSend({ type: "typing:start", chat_id: currentChatId });
     clearTimeout(typingTimer);
     typingTimer = setTimeout(() => {
@@ -1157,9 +1192,6 @@ btnBack &&
   loadPersistedDrafts();
 
   if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
-
-  // на старте прячем плашку + ревокаем на всякий
-  showSelectedFileUI(null);
 
   if (token) {
     await loadMe();
