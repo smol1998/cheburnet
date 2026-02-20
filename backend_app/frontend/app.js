@@ -38,6 +38,9 @@ const draftsByChatId = new Map();
 let dialogsReloadTimer = null;
 let dialogsReloadInFlight = false;
 
+// selected file preview (URL.createObjectURL)
+let selectedFileObjectUrl = null;
+
 /* =========================
    DOM
    ========================= */
@@ -88,6 +91,13 @@ const btnBack = document.getElementById("btnBack");
 // tabs/pages layout (важно для фикса read/new)
 const pageChats = document.getElementById("pageChats");
 const chatsLayout = document.getElementById("chatsLayout");
+
+// ✅ Selected file visual (HTML уже есть)
+const selectedFile = document.getElementById("selectedFile");
+const sfIcon = document.getElementById("sfIcon");
+const sfName = document.getElementById("sfName");
+const sfSub = document.getElementById("sfSub");
+const sfRemove = document.getElementById("sfRemove");
 
 /* =========================
    Helpers
@@ -192,6 +202,62 @@ function scheduleDialogsReload(reason = "") {
       dialogsReloadInFlight = false;
     }
   }, 300);
+}
+
+/* =========================
+   ✅ Selected file preview
+   ========================= */
+
+function fmtBytes(n) {
+  const v = Number(n || 0);
+  if (!v) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  let x = v;
+  while (x >= 1024 && i < units.length - 1) { x /= 1024; i++; }
+  return `${x.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function revokeSelectedFileObjectUrl() {
+  if (selectedFileObjectUrl) {
+    try { URL.revokeObjectURL(selectedFileObjectUrl); } catch (_) {}
+    selectedFileObjectUrl = null;
+  }
+}
+
+function clearSelectedFileUI({ keepInput = false } = {}) {
+  revokeSelectedFileObjectUrl();
+
+  if (!keepInput && file) file.value = "";
+
+  if (selectedFile) selectedFile.style.display = "none";
+  if (sfIcon) sfIcon.textContent = "📎";
+  if (sfName) sfName.textContent = "file";
+  if (sfSub) sfSub.textContent = "—";
+}
+
+function showSelectedFileUI(f) {
+  if (!selectedFile || !sfIcon || !sfName || !sfSub) return;
+  if (!f) { clearSelectedFileUI(); return; }
+
+  sfName.textContent = f.name || "file";
+  sfSub.textContent = `${fmtBytes(f.size)} • ${f.type || "file"}`;
+
+  // preview/icon
+  sfIcon.textContent = "📎";
+  revokeSelectedFileObjectUrl();
+
+  if (f.type && f.type.startsWith("image/")) {
+    selectedFileObjectUrl = URL.createObjectURL(f);
+    sfIcon.innerHTML = `<img src="${selectedFileObjectUrl}" alt="preview">`;
+  } else if (f.type && f.type.startsWith("video/")) {
+    // Лёгкий визуал (без тяжёлого thumbnail)
+    sfIcon.textContent = "🎥";
+  } else {
+    sfIcon.textContent = "📎";
+  }
+
+  selectedFile.style.display = "flex";
 }
 
 /* =========================
@@ -466,6 +532,9 @@ function logout() {
 
   setAccountMode(false);
   renderMiniMePill();
+
+  // на выходе чистим выбранный файл/превью
+  clearSelectedFileUI();
 
   if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
 }
@@ -1054,7 +1123,7 @@ async function uploadSelectedFile() {
     xhr.send(form);
   }).finally(() => {
     hideUpload();
-    if (file) file.value = "";
+    // ✅ ВАЖНО: file.value НЕ чистим тут, чтобы превью не пропадало до успешной отправки
   });
 }
 
@@ -1077,14 +1146,22 @@ async function sendMessage() {
   const msgText = (text.value || "").trim();
   let fileIds = [];
 
-  try {
-    const up = await uploadSelectedFile();
-    if (up && up.file_id) fileIds.push(up.file_id);
-  } catch (e) {
-    alert("Upload failed: " + String(e && e.message ? e.message : e));
-    return;
+  // если ничего нет — не отправляем
+  const hasFile = !!(file && file.files && file.files[0]);
+  if (!msgText && !hasFile) return;
+
+  // сначала грузим файл (если есть)
+  if (hasFile) {
+    try {
+      const up = await uploadSelectedFile();
+      if (up && up.file_id) fileIds.push(up.file_id);
+    } catch (e) {
+      alert("Upload failed: " + String(e && e.message ? e.message : e));
+      return; // ✅ превью остаётся, чтобы можно было повторить send
+    }
   }
 
+  // после аплоада могло оказаться что нет ни текста ни файла
   if (!msgText && !fileIds.length) return;
 
   const prevText = text.value || "";
@@ -1129,6 +1206,9 @@ async function sendMessage() {
   } catch (_) {}
 
   setUnread(currentChatId, false);
+
+  // ✅ успешная отправка — чистим файл + превью
+  clearSelectedFileUI();
 }
 
 /* =========================
@@ -1143,6 +1223,18 @@ btnSend && (btnSend.onclick = () => sendMessage());
 
 btnLogout && (btnLogout.onclick = logout);
 btnSaveProfile && (btnSaveProfile.onclick = saveProfile);
+
+// ✅ preview выбранного файла в чате
+if (file) {
+  file.addEventListener("change", () => {
+    const f = file.files && file.files[0];
+    showSelectedFileUI(f || null);
+  });
+}
+sfRemove && sfRemove.addEventListener("click", () => {
+  // убираем выбранный файл, но оставляем текст
+  clearSelectedFileUI();
+});
 
 if (text) {
   text.addEventListener("compositionstart", () => { isComposing = true; });
@@ -1192,6 +1284,9 @@ btnBack &&
   loadPersistedDrafts();
 
   if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
+
+  // при старте — если в input уже есть файл (редко), покажем превью
+  if (file && file.files && file.files[0]) showSelectedFileUI(file.files[0]);
 
   if (token) {
     await loadMe();
