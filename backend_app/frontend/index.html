@@ -4,28 +4,22 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Messenger MVP</title>
-
   <link rel="icon" href="data:,">
 
   <style>
     :root{
-      /* ===== Palette ===== */
       --bg:#000000;
       --accent:#D1FE17;
 
-      /* text */
       --text:rgba(255,255,255,.94);
       --muted:rgba(255,255,255,.62);
 
-      /* glass surfaces */
       --glass:  rgba(18,18,18,.38);
       --glass2: rgba(12,12,12,.52);
 
-      /* strokes */
       --stroke2: rgba(255,255,255,.10);
       --stroke:  rgba(209,254,23,.28);
 
-      /* shadows */
       --shadow: 0 18px 55px rgba(0,0,0,.62);
       --shadow2: 0 8px 28px rgba(0,0,0,.55);
 
@@ -44,16 +38,14 @@
       --sab: env(safe-area-inset-bottom, 0px);
       --sal: env(safe-area-inset-left, 0px);
 
-      /* glass tuning */
       --glassBlur: 26px;
       --glassSat:  170%;
       --glassBright: 108%;
 
-      /* readability */
-      --panelDim: rgba(0,0,0,.35);
-
-      /* stable viewport height helper */
+      /* ✅ viewport stability */
       --appVh: 1vh;
+      --kb: 0px;
+      --lift: 0px;
     }
 
     *{box-sizing:border-box}
@@ -113,10 +105,6 @@
     .shell{
       max-width:1320px;
       margin:0 auto;
-
-      height:100vh;
-      height:100svh;
-      height:100dvh;
       height: calc(var(--appVh) * 100);
 
       padding-top:    calc(14px + var(--sat));
@@ -191,9 +179,7 @@
         inset -1px 0 0 rgba(255,255,255,.04);
     }
 
-    .liquid{
-      --shimmerOpacity: .18;
-    }
+    .liquid{ --shimmerOpacity: .18; }
     .liquid .liquidLayer{
       position:absolute;
       inset:-40%;
@@ -402,11 +388,14 @@
       font-weight:800;
       white-space:nowrap;
       line-height:1;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+
       display:inline-flex;
       align-items:center;
       justify-content:center;
+      text-align:center;
+
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
     .btn:hover{ background:rgba(209,254,23,.24); }
     .btn.secondary{
@@ -424,7 +413,6 @@
     .hint{ color:var(--muted); font-size:12px; line-height:1.4; }
     .row{ display:grid; gap:10px; }
     .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-    .actions{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
 
     .accountWrap{
       width:100%;
@@ -474,6 +462,72 @@
     }
     .fileBtn input[type="file"]{ position:absolute; inset:0; opacity:0; cursor:pointer; }
 
+    /* Auth layout */
+    .authStack{ display:flex; flex-direction:column; gap:12px; }
+    .authSwitch{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:10px;
+      padding:6px;
+      border-radius:16px;
+      background:rgba(255,255,255,.05);
+      border:1px solid rgba(255,255,255,.10);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .authSwitchBtn{
+      height:40px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.16);
+      color:rgba(255,255,255,.78);
+      font-weight:900;
+      cursor:pointer;
+      transition: background .18s ease, border-color .18s ease, transform .18s ease, color .18s ease;
+
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      text-align:center;
+      line-height:1;
+    }
+    .authSwitchBtn:hover{
+      background:rgba(255,255,255,.06);
+      border-color:rgba(209,254,23,.24);
+    }
+    .authSwitchBtn.active{
+      background:rgba(209,254,23,.92);
+      border-color:rgba(209,254,23,.55);
+      color:#0b0b0b;
+      box-shadow: 0 10px 24px rgba(209,254,23,.12);
+    }
+    .authRow2{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:10px;
+      align-items:center;
+    }
+    .authActions{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:10px;
+    }
+    .registerFields{
+      overflow:hidden;
+      max-height:0;
+      opacity:0;
+      transform: translateY(-6px);
+      transition: max-height .34s ease, opacity .24s ease, transform .24s ease;
+      will-change: max-height, opacity, transform;
+      pointer-events:none;
+    }
+    .registerFields.open{
+      max-height: 520px;
+      opacity:1;
+      transform: translateY(0);
+      pointer-events:auto;
+    }
+
     .profileTop{
       display:flex;
       align-items:center;
@@ -508,6 +562,7 @@
       margin-top:2px;
     }
 
+    /* Chats */
     .chatsLayout{
       width:100%;
       display:grid;
@@ -612,6 +667,7 @@
       gap:10px;
       position:relative;
       z-index:3;
+      overscroll-behavior: contain;
     }
     .loading{
       align-self:center;
@@ -666,6 +722,18 @@
       -webkit-backdrop-filter: blur(18px);
       position:relative;
       z-index:3;
+
+      flex: 0 0 auto;
+      transition: transform .24s ease, box-shadow .24s ease, border-color .24s ease;
+      will-change: transform;
+    }
+    .chat.kbdFocus .composer{
+      transform: translateY(calc(-1 * var(--lift)));
+      box-shadow: 0 22px 60px rgba(0,0,0,.55);
+      border-top-color: rgba(209,254,23,.22);
+    }
+    .chat.kbdFocus .messages{
+      padding-bottom: calc(14px + var(--lift));
     }
 
     .composerLeft{
@@ -675,7 +743,6 @@
       align-items:center;
       min-width:0;
     }
-
     .composerRight{
       display:flex;
       align-items:center;
@@ -684,10 +751,10 @@
       flex:0 0 auto;
     }
 
-    /* Selected file visual */
+    /* Selected file (единственный вариант UI) */
     .selectedFile{
       grid-column:1 / -1;
-      display:flex;
+      display:none;
       align-items:center;
       justify-content:space-between;
       gap:10px;
@@ -730,10 +797,9 @@
       object-fit:cover;
       display:block;
     }
-
     .sfMeta{ min-width:0; }
     .sfName{
-      font-weight:800;
+      font-weight:900;
       font-size:13px;
       white-space:nowrap;
       overflow:hidden;
@@ -744,61 +810,101 @@
       font-size:12px;
       color:rgba(255,255,255,.60);
       margin-top:2px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      max-width: 52vw;
     }
+
+    /* ✅ progress around X button (not a circle; follow button shape) */
     .sfRemove{
-      height:34px;
-      width:34px;
+      --p: 0; /* 0..100 */
+      position:relative;
+      height:36px;
+      width:36px;
       border-radius:12px;
       border:1px solid rgba(255,255,255,.14);
       background:rgba(255,255,255,.05);
       color:rgba(255,255,255,.78);
       cursor:pointer;
-      font-weight:900;
+      display:flex;
+      align-items:center;
+      justify-content:center;
       line-height:1;
       flex:0 0 auto;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
+      transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease, color .18s ease;
+      isolation:isolate;
+    }
+
+    /* ring-like border by masking the center */
+    .sfRemove::before{
+      content:"";
+      position:absolute;
+      inset:-2px;
+      border-radius:14px;
+      padding:2px; /* border thickness */
+      background:
+        conic-gradient(
+          var(--accent) calc(var(--p) * 1%),
+          rgba(255,255,255,.10) 0
+        );
+      -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      opacity:0;
+      transition: opacity .16s ease;
+      z-index:0;
+      pointer-events:none;
+    }
+
+    .sfRemove.uploading{
+      border-color: rgba(209,254,23,.45);
+      background: rgba(209,254,23,.10);
+      animation: ringPulse 1.2s ease-in-out infinite;
+      color: rgba(255,255,255,.92);
+    }
+    .sfRemove.uploading::before{
+      opacity: 1;
+      filter: drop-shadow(0 0 8px rgba(209,254,23,0.22));
     }
     .sfRemove:hover{
       border-color:rgba(255,90,90,.40);
       color:#ffb0b0;
       background:rgba(255,90,90,.10);
     }
+    .sfRemove.uploading:hover{
+      border-color: rgba(209,254,23,.55);
+      background: rgba(209,254,23,.12);
+      color: rgba(255,255,255,.92);
+    }
 
-    .uploadBar{
-      display:none;
-      grid-column:1 / -1;
-      padding:10px 12px;
-      border-radius:12px;
-      border:1px solid rgba(255,255,255,.10);
-      background:rgba(255,255,255,.04);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
+    .sfRemoveInner{
       position:relative;
-      z-index:3;
+      z-index:1;
+      font-weight:900;
+      font-size:14px;
+      transform: translateY(-.5px);
+      user-select:none;
     }
-    .uploadTop{
-      display:flex;
-      justify-content:space-between;
-      gap:10px;
-      font-size:12px;
-      color:var(--muted);
-      margin-bottom:8px;
+
+    @keyframes ringPulse {
+      0%   { box-shadow: 0 0 0 rgba(209,254,23,0.00); }
+      50%  { box-shadow: 0 0 18px rgba(209,254,23,0.18); }
+      100% { box-shadow: 0 0 0 rgba(209,254,23,0.00); }
     }
-    .progressTrack{
-      width:100%;
-      height:10px;
-      border-radius:999px;
-      background:rgba(255,255,255,.08);
-      overflow:hidden;
-      border:1px solid rgba(255,255,255,.08);
+    @keyframes ringDonePop {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+      100% { transform: scale(1); }
     }
-    .progressFill{
-      height:100%;
-      width:0%;
-      background:linear-gradient(90deg, rgba(209,254,23,.62), rgba(209,254,23,.92));
-      border-radius:999px;
-      transition: width .15s linear;
+    .sfRemove.done{
+      animation: ringDonePop .28s ease-out 1;
+      border-color: rgba(209,254,23,.65);
+      box-shadow: 0 10px 22px rgba(209,254,23,.10);
     }
 
     .unreadBadge{
@@ -812,14 +918,13 @@
       color:var(--accent);
     }
 
-    /* ==== Telegram-like buttons ==== */
+    /* send button */
     .fileBtn.compact{
       height:38px;
       padding:0 10px;
       border-radius:12px;
       min-width: 86px;
     }
-
     .sendIconBtn{
       height:38px;
       width:38px;
@@ -840,8 +945,6 @@
     .sendIconBtn:hover{ background:rgba(209,254,23,.28); }
     .sendIconBtn:active{ transform:translateY(1px); }
     .sendIconBtn[disabled]{ opacity:.6; cursor:not-allowed; }
-
-    /* скрытие без дерганья верстки */
     .sendIconBtn.isHidden{
       opacity:0;
       pointer-events:none;
@@ -870,7 +973,6 @@
       .chatTitle{ max-width: 52vw; }
       .msg{ max-width:92%; }
 
-      /* mobile fullscreen mode */
       body.chat-full .topbar{ display:none; }
       body.chat-full .shell{ padding:0; }
       body.chat-full .chat{
@@ -878,10 +980,15 @@
         border-radius: 0;
       }
     }
+
     @media (max-width:520px){
       .row2{ grid-template-columns:1fr; }
-      .actions{ grid-template-columns:1fr; }
       .searchRow{ grid-template-columns:1fr 92px; }
+
+      .authRow2{ grid-template-columns: 1fr; }
+
+      .composer{ grid-template-columns:1fr; }
+      .composerRight{ justify-content:space-between; }
     }
   </style>
 </head>
@@ -969,26 +1076,19 @@
 
           <div class="composer">
 
-            <!-- selected file preview -->
-            <div class="selectedFile" id="selectedFile" style="display:none">
+            <!-- ✅ единственный блок выбранного файла -->
+            <div class="selectedFile" id="selectedFile">
               <div class="sfLeft">
                 <div class="sfIcon" id="sfIcon">📎</div>
                 <div class="sfMeta">
-                  <div class="sfName" id="sfName">file</div>
+                  <div class="sfName" id="sfName">Файл</div>
                   <div class="sfSub" id="sfSub">—</div>
                 </div>
               </div>
-              <button class="sfRemove" id="sfRemove" type="button" title="Убрать">✕</button>
-            </div>
 
-            <div class="uploadBar" id="uploadBar">
-              <div class="uploadTop">
-                <div id="uploadName">Uploading…</div>
-                <div id="uploadPct">0%</div>
-              </div>
-              <div class="progressTrack">
-                <div class="progressFill" id="uploadFill"></div>
-              </div>
+              <button class="sfRemove" id="sfRemove" type="button" title="Cancel upload">
+                <span class="sfRemoveInner">✕</span>
+              </button>
             </div>
 
             <div class="composerLeft">
@@ -1000,10 +1100,8 @@
                 📎 File
                 <input id="file" type="file" />
               </label>
-
               <button class="sendIconBtn isHidden" id="btnSend" type="button" aria-label="Send">➤</button>
             </div>
-
           </div>
         </main>
 
@@ -1023,36 +1121,43 @@
           </div>
 
           <div class="cardBody">
-            <!-- Твоя текущая account-часть остаётся как есть -->
+
             <div id="authBox">
-              <div class="row2">
-                <input id="u" class="input" placeholder="username" />
-                <input id="p" class="input" placeholder="password" type="password" />
-              </div>
-
-              <div style="height:10px"></div>
-
-              <div class="row2">
-                <select id="birthYear" class="input">
-                  <option value="">Год рождения (не выбран)</option>
-                </select>
-
-                <div style="display:flex;align-items:center;gap:12px">
-                  <div class="avatarPreview" id="avatarPreview">👤</div>
-                  <label class="fileBtn" style="height:var(--inputH);">
-                    🖼️ Фото
-                    <input id="avatar" type="file" accept="image/*" />
-                  </label>
+              <div class="authStack">
+                <div class="authSwitch" role="tablist" aria-label="Auth mode">
+                  <button class="authSwitchBtn active" id="authModeLogin" type="button" aria-selected="true">Войти</button>
+                  <button class="authSwitchBtn" id="authModeRegister" type="button" aria-selected="false">Регистрация</button>
                 </div>
-              </div>
 
-              <div class="hint" style="margin-top:10px">
-                Регистрация: username + password + (опционально) год рождения + фото.
-              </div>
+                <div class="authRow2">
+                  <input id="u" class="input" placeholder="username" autocomplete="username" />
+                  <input id="p" class="input" placeholder="password" type="password" autocomplete="current-password" />
+                </div>
 
-              <div class="actions">
-                <button class="btn" id="btnRegister" type="button">Register</button>
-                <button class="btn secondary" id="btnLogin" type="button">Login</button>
+                <div id="registerFields" class="registerFields" aria-hidden="true">
+                  <div class="row2" style="margin-top:10px">
+                    <select id="birthYear" class="input">
+                      <option value="">Год рождения (не выбран)</option>
+                    </select>
+
+                    <div style="display:flex;align-items:center;gap:12px;justify-content:flex-end">
+                      <div class="avatarPreview" id="avatarPreview">👤</div>
+                      <label class="fileBtn" style="height:var(--inputH);">
+                        🖼️ Фото
+                        <input id="avatar" type="file" accept="image/*" />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="hint" style="margin-top:10px">
+                    Регистрация: username + password + (опционально) год рождения + фото.
+                  </div>
+                </div>
+
+                <div class="authActions">
+                  <button class="btn" id="btnLogin" type="button">Войти</button>
+                  <button class="btn" id="btnRegister" type="button" style="display:none">Зарегистрироваться</button>
+                </div>
               </div>
             </div>
 
@@ -1089,6 +1194,7 @@
                 Изменения сохраняются в профиле: год рождения и аватарка.
               </div>
             </div>
+
           </div>
         </section>
 
@@ -1097,101 +1203,6 @@
 
   </div>
 
-  <script>
-    // Stable viewport height (prevents jumps on mobile keyboard)
-    (function(){
-      const setVh = () => {
-        const h = (window.visualViewport && window.visualViewport.height) ? window.visualViewport.height : window.innerHeight;
-        document.documentElement.style.setProperty('--appVh', (h * 0.01) + 'px');
-      };
-      setVh();
-      window.addEventListener('resize', setVh);
-      if (window.visualViewport){
-        window.visualViewport.addEventListener('resize', setVh);
-        window.visualViewport.addEventListener('scroll', setVh);
-      }
-    })();
-  </script>
-
-  <script>
-    (() => {
-      const tabChats = document.getElementById('tabChats');
-      const tabAccount = document.getElementById('tabAccount');
-      const pageChats = document.getElementById('pageChats');
-      const pageAccount = document.getElementById('pageAccount');
-
-      const chatsLayout = document.getElementById('chatsLayout');
-      const btnBack = document.getElementById('btnBack');
-
-      function setTab(name){
-        const isChats = name === 'chats';
-
-        tabChats.classList.toggle('active', isChats);
-        tabAccount.classList.toggle('active', !isChats);
-        tabChats.setAttribute('aria-selected', isChats ? 'true' : 'false');
-        tabAccount.setAttribute('aria-selected', !isChats ? 'true' : 'false');
-
-        pageChats.classList.toggle('active', isChats);
-        pageAccount.classList.toggle('active', !isChats);
-
-        if (!isChats) chatsLayout.classList.remove('chats-open-chat');
-        if (!isChats) document.body.classList.remove('chat-full');
-      }
-
-      function showChatMobile(){
-        chatsLayout.classList.add('chats-open-chat');
-        document.body.classList.add('chat-full');
-      }
-      function showListMobile(){
-        chatsLayout.classList.remove('chats-open-chat');
-        document.body.classList.remove('chat-full');
-      }
-
-      tabChats.addEventListener('click', ()=>setTab('chats'));
-      tabAccount.addEventListener('click', ()=>setTab('account'));
-      btnBack.addEventListener('click', showListMobile);
-
-      window.ui = { setTab, showChatMobile, showListMobile };
-
-      const now = new Date().getFullYear();
-      const years = [];
-      for (let y = now - 10; y >= now - 90; y--) years.push(y);
-
-      const by = document.getElementById('birthYear');
-      const pby = document.getElementById('profileBirthYear');
-
-      for (const y of years){
-        const opt1 = document.createElement('option');
-        opt1.value = String(y);
-        opt1.textContent = String(y);
-        by.appendChild(opt1);
-
-        const opt2 = document.createElement('option');
-        opt2.value = String(y);
-        opt2.textContent = String(y);
-        pby.appendChild(opt2);
-      }
-
-      const avatar = document.getElementById('avatar');
-      const preview = document.getElementById('avatarPreview');
-      avatar.addEventListener('change', () => {
-        const f = avatar.files && avatar.files[0];
-        if (!f) { preview.innerHTML = '👤'; return; }
-        const url = URL.createObjectURL(f);
-        preview.innerHTML = `<img src="${url}" alt="avatar">`;
-      });
-
-      const av2 = document.getElementById('profileAvatarInput');
-      const prev2 = document.getElementById('profileAvatar');
-      av2.addEventListener('change', () => {
-        const f = av2.files && av2.files[0];
-        if (!f) return;
-        const url = URL.createObjectURL(f);
-        prev2.innerHTML = `<img src="${url}" alt="avatar">`;
-      });
-    })();
-  </script>
-
-  <script src="/static/app.js?v=3010"></script>
+  <script src="/static/app.js?v=4007"></script>
 </body>
 </html>

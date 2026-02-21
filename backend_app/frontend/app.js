@@ -2,7 +2,6 @@
    CONFIG
    ========================= */
 
-// Если фронт и бек на одном домене/порту — оставь "".
 const API = "";
 
 /* =========================
@@ -27,19 +26,20 @@ let pollTimer = null;
 let isComposing = false;
 let isSending = false;
 
-// для аватаров/ников и NEW
 const otherByChatId = new Map();
 
-// unread NEW
 const unreadByChatId = new Map();
 const draftsByChatId = new Map();
 
-// debounce reload dialogs (важно для first-time chats)
 let dialogsReloadTimer = null;
 let dialogsReloadInFlight = false;
 
-// selected file preview (URL.createObjectURL)
 let selectedFileObjectUrl = null;
+
+let authMode = "login";
+
+// upload cancel
+let currentUploadXhr = null;
 
 /* =========================
    DOM
@@ -53,6 +53,7 @@ const file = document.getElementById("file");
 
 const birthYear = document.getElementById("birthYear");
 const avatarInput = document.getElementById("avatar");
+const avatarPreview = document.getElementById("avatarPreview");
 
 const profileBox = document.getElementById("profileBox");
 const authBox = document.getElementById("authBox");
@@ -81,23 +82,79 @@ const btnFind = document.getElementById("btnFind");
 const btnReloadDialogs = document.getElementById("btnReloadDialogs");
 const btnSend = document.getElementById("btnSend");
 
-const uploadBar = document.getElementById("uploadBar");
-const uploadName = document.getElementById("uploadName");
-const uploadPct = document.getElementById("uploadPct");
-const uploadFill = document.getElementById("uploadFill");
-
 const btnBack = document.getElementById("btnBack");
 
-// tabs/pages layout (важно для фикса read/new)
 const pageChats = document.getElementById("pageChats");
+const pageAccount = document.getElementById("pageAccount");
 const chatsLayout = document.getElementById("chatsLayout");
+const tabChats = document.getElementById("tabChats");
+const tabAccount = document.getElementById("tabAccount");
 
-// ✅ Selected file visual
+const chatPanel = document.getElementById("chatPanel");
+
+// Selected file visual
 const selectedFile = document.getElementById("selectedFile");
 const sfIcon = document.getElementById("sfIcon");
 const sfName = document.getElementById("sfName");
 const sfSub = document.getElementById("sfSub");
 const sfRemove = document.getElementById("sfRemove");
+
+// auth switch
+const authModeLogin = document.getElementById("authModeLogin");
+const authModeRegister = document.getElementById("authModeRegister");
+const registerFields = document.getElementById("registerFields");
+
+/* =========================
+   Viewport stability (mobile keyboard)
+   ========================= */
+
+let _isTextFocused = false;
+
+function _clamp(n, a, b) {
+  return Math.max(a, Math.min(b, n));
+}
+
+function setViewportVars() {
+  const vv = window.visualViewport;
+  const vhPx = vv ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty("--appVh", `${vhPx * 0.01}px`);
+
+  let kb = 0;
+  if (vv) {
+    const layoutH = window.innerHeight;
+    kb = Math.max(0, layoutH - vv.height - (vv.offsetTop || 0));
+  }
+  document.documentElement.style.setProperty("--kb", `${kb}px`);
+
+  const isMobile = window.matchMedia && window.matchMedia("(max-width:980px)").matches;
+
+  let lift = 0;
+  if (_isTextFocused) {
+    if (isMobile) {
+      lift = _clamp(kb * 0.12, 10, 26);
+      if (kb < 8) lift = 12;
+    } else {
+      lift = 12;
+    }
+  }
+  document.documentElement.style.setProperty("--lift", `${lift}px`);
+}
+
+function applyComposerFocusUI(on) {
+  if (!chatPanel) return;
+  chatPanel.classList.toggle("kbdFocus", !!on);
+}
+
+(function bindViewportEvents() {
+  setViewportVars();
+
+  const vv = window.visualViewport;
+  if (vv) {
+    vv.addEventListener("resize", () => requestAnimationFrame(setViewportVars));
+    vv.addEventListener("scroll", () => requestAnimationFrame(setViewportVars));
+  }
+  window.addEventListener("resize", () => requestAnimationFrame(setViewportVars));
+})();
 
 /* =========================
    Helpers
@@ -121,7 +178,6 @@ async function readError(r) {
   return txt || `HTTP ${r.status}`;
 }
 
-/** ✅ нормализуем chat_id к Number везде */
 function normChatId(x) {
   const n = Number(x);
   return Number.isFinite(n) ? n : null;
@@ -133,10 +189,6 @@ function hasDialogRowInDOM(chatId) {
   return !!document.querySelector(`.item[data-chatid="${cid}"]`);
 }
 
-/**
- * Делает URL до файла с добавлением ?token=...
- * и опциональным cache-bust параметром v=...
- */
 function fileUrl(pathOrUrl, v = null) {
   if (!pathOrUrl) return "";
   const sep1 = pathOrUrl.includes("?") ? "&" : "?";
@@ -160,8 +212,35 @@ function ensureAvatarPath(uobj) {
 }
 
 /* =========================
-   ✅ VISIBILITY FIX
+   Tabs / mobile layout
    ========================= */
+
+function setTab(name) {
+  const isChats = name === "chats";
+  tabChats && tabChats.classList.toggle("active", isChats);
+  tabAccount && tabAccount.classList.toggle("active", !isChats);
+
+  tabChats && tabChats.setAttribute("aria-selected", isChats ? "true" : "false");
+  tabAccount && tabAccount.setAttribute("aria-selected", !isChats ? "true" : "false");
+
+  pageChats && pageChats.classList.toggle("active", isChats);
+  pageAccount && pageAccount.classList.toggle("active", !isChats);
+
+  if (!isChats) {
+    chatsLayout && chatsLayout.classList.remove("chats-open-chat");
+    document.body.classList.remove("chat-full");
+  }
+}
+
+function showChatMobile() {
+  chatsLayout && chatsLayout.classList.add("chats-open-chat");
+  document.body.classList.add("chat-full");
+}
+
+function showListMobile() {
+  chatsLayout && chatsLayout.classList.remove("chats-open-chat");
+  document.body.classList.remove("chat-full");
+}
 
 function isChatsTabActive() {
   return !!(pageChats && pageChats.classList.contains("active"));
@@ -182,10 +261,86 @@ function isDialogVisible(chatId) {
 }
 
 /* =========================
+   Auth mode UI
+   ========================= */
+
+function setAuthMode(mode) {
+  authMode = mode === "register" ? "register" : "login";
+
+  if (authModeLogin) {
+    authModeLogin.classList.toggle("active", authMode === "login");
+    authModeLogin.setAttribute("aria-selected", authMode === "login" ? "true" : "false");
+  }
+  if (authModeRegister) {
+    authModeRegister.classList.toggle("active", authMode === "register");
+    authModeRegister.setAttribute("aria-selected", authMode === "register" ? "true" : "false");
+  }
+
+  if (registerFields) {
+    const open = authMode === "register";
+    registerFields.classList.toggle("open", open);
+    registerFields.setAttribute("aria-hidden", open ? "false" : "true");
+  }
+
+  if (btnLogin) btnLogin.style.display = authMode === "login" ? "inline-flex" : "none";
+  if (btnRegister) btnRegister.style.display = authMode === "register" ? "inline-flex" : "none";
+
+  if (p) p.autocomplete = authMode === "login" ? "current-password" : "new-password";
+}
+
+/* =========================
+   Years + avatar previews
+   ========================= */
+
+function fillYears() {
+  const now = new Date().getFullYear();
+  const years = [];
+  for (let y = now - 10; y >= now - 90; y--) years.push(y);
+
+  if (birthYear) {
+    for (const y of years) {
+      const opt = document.createElement("option");
+      opt.value = String(y);
+      opt.textContent = String(y);
+      birthYear.appendChild(opt);
+    }
+  }
+
+  if (profileBirthYear) {
+    for (const y of years) {
+      const opt = document.createElement("option");
+      opt.value = String(y);
+      opt.textContent = String(y);
+      profileBirthYear.appendChild(opt);
+    }
+  }
+}
+
+function bindAvatarPreviews() {
+  if (avatarInput && avatarPreview) {
+    avatarInput.addEventListener("change", () => {
+      const f = avatarInput.files && avatarInput.files[0];
+      if (!f) { avatarPreview.innerHTML = "👤"; return; }
+      const url = URL.createObjectURL(f);
+      avatarPreview.innerHTML = `<img src="${url}" alt="avatar">`;
+    });
+  }
+
+  if (profileAvatarInput && profileAvatar) {
+    profileAvatarInput.addEventListener("change", () => {
+      const f = profileAvatarInput.files && profileAvatarInput.files[0];
+      if (!f) return;
+      const url = URL.createObjectURL(f);
+      profileAvatar.innerHTML = `<img src="${url}" alt="avatar">`;
+    });
+  }
+}
+
+/* =========================
    Debounced dialogs reload
    ========================= */
 
-function scheduleDialogsReload(reason = "") {
+function scheduleDialogsReload() {
   if (!token) return;
   if (dialogsReloadTimer) return;
 
@@ -205,7 +360,7 @@ function scheduleDialogsReload(reason = "") {
 }
 
 /* =========================
-   ✅ Telegram-like Send visibility
+   Telegram-like Send visibility
    ========================= */
 
 function hasComposerContent() {
@@ -219,13 +374,16 @@ function updateSendVisibility() {
   if (!btnSend) return;
   const show = hasComposerContent();
   btnSend.classList.toggle("isHidden", !show);
+}
 
-  // если идёт отправка — кнопка может быть видимой, но disabled
-  // disabled ставится через disableSend()
+function disableSend(disabled) {
+  if (!btnSend) return;
+  btnSend.disabled = !!disabled;
+  btnSend.style.opacity = disabled ? "0.7" : "";
 }
 
 /* =========================
-   ✅ Selected file preview
+   Selected file preview + progress on X button
    ========================= */
 
 function fmtBytes(n) {
@@ -238,11 +396,32 @@ function fmtBytes(n) {
   return `${x.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+function extOf(name) {
+  const s = String(name || "");
+  const i = s.lastIndexOf(".");
+  if (i <= 0) return "";
+  return s.slice(i + 1).toLowerCase();
+}
+
+function typeLabelAndIcon(f) {
+  const mime = (f && f.type) ? String(f.type) : "";
+  if (mime.startsWith("image/")) return { label: "Фото", icon: "🖼️" };
+  if (mime.startsWith("video/")) return { label: "Видео", icon: "🎥" };
+  if (mime.startsWith("audio/")) return { label: "Аудио", icon: "🎵" };
+  return { label: "Файл", icon: "📎" };
+}
+
 function revokeSelectedFileObjectUrl() {
   if (selectedFileObjectUrl) {
     try { URL.revokeObjectURL(selectedFileObjectUrl); } catch (_) {}
     selectedFileObjectUrl = null;
   }
+}
+
+function setBtnProgress(pct) {
+  if (!sfRemove) return;
+  const v = Math.max(0, Math.min(100, pct || 0));
+  sfRemove.style.setProperty("--p", String(v));
 }
 
 function clearSelectedFileUI({ keepInput = false } = {}) {
@@ -252,8 +431,14 @@ function clearSelectedFileUI({ keepInput = false } = {}) {
 
   if (selectedFile) selectedFile.style.display = "none";
   if (sfIcon) sfIcon.textContent = "📎";
-  if (sfName) sfName.textContent = "file";
+  if (sfName) sfName.textContent = "Файл";
   if (sfSub) sfSub.textContent = "—";
+
+  if (sfRemove) {
+    sfRemove.classList.remove("uploading", "done");
+    sfRemove.title = "Cancel upload";
+    setBtnProgress(0);
+  }
 
   updateSendVisibility();
 }
@@ -262,22 +447,33 @@ function showSelectedFileUI(f) {
   if (!selectedFile || !sfIcon || !sfName || !sfSub) return;
   if (!f) { clearSelectedFileUI(); return; }
 
-  sfName.textContent = f.name || "file";
-  sfSub.textContent = `${fmtBytes(f.size)} • ${f.type || "file"}`;
+  const { label, icon } = typeLabelAndIcon(f);
 
-  sfIcon.textContent = "📎";
+  // ✅ вместо длинного имени — короткий тип
+  sfName.textContent = label;
+
+  const e = extOf(f.name);
+  const mimeShort = f.type ? f.type : (e ? `.${e}` : "file");
+  sfSub.textContent = `${fmtBytes(f.size)} • ${mimeShort}`;
+
+  // полное имя только как подсказка
+  selectedFile.title = f.name || "";
+
+  sfIcon.textContent = icon;
   revokeSelectedFileObjectUrl();
 
   if (f.type && f.type.startsWith("image/")) {
     selectedFileObjectUrl = URL.createObjectURL(f);
     sfIcon.innerHTML = `<img src="${selectedFileObjectUrl}" alt="preview">`;
-  } else if (f.type && f.type.startsWith("video/")) {
-    sfIcon.textContent = "🎥";
-  } else {
-    sfIcon.textContent = "📎";
   }
 
   selectedFile.style.display = "flex";
+
+  if (sfRemove) {
+    sfRemove.classList.remove("uploading", "done");
+    setBtnProgress(0);
+  }
+
   updateSendVisibility();
 }
 
@@ -324,12 +520,6 @@ function getLastRenderedMessageId() {
   return Number.isFinite(lastId) ? lastId : 0;
 }
 
-function disableSend(disabled) {
-  if (!btnSend) return;
-  btnSend.disabled = !!disabled;
-  btnSend.style.opacity = disabled ? "0.7" : "";
-}
-
 /* =========================
    Account UI state
    ========================= */
@@ -365,7 +555,7 @@ function paintProfile() {
 }
 
 /* =========================
-   Persist unread
+   Persist unread + drafts
    ========================= */
 
 const LS_UNREAD = "unreadByChatId_v1";
@@ -392,6 +582,24 @@ function savePersistedUnread() {
   } catch (_) {}
 }
 
+function paintUnreadBadge(chatId, show) {
+  const cid = normChatId(chatId);
+  if (!cid) return;
+
+  const el = document.querySelector(`.item[data-chatid="${cid}"]`);
+  if (!el) return;
+
+  const row = el.querySelector(".dialogRow");
+  if (!row) return;
+
+  const old = row.querySelector(".unreadBadge");
+  if (!show) {
+    if (old) old.remove();
+    return;
+  }
+  if (!old) row.insertAdjacentHTML("beforeend", `<span class="unreadBadge">NEW</span>`);
+}
+
 function setUnread(chatId, val) {
   const cid = normChatId(chatId);
   if (!cid) return;
@@ -400,9 +608,7 @@ function setUnread(chatId, val) {
 
   paintUnreadBadge(cid, !!val);
 
-  if (!!val && !hasDialogRowInDOM(cid)) {
-    scheduleDialogsReload("unread:missing_dialog_row");
-  }
+  if (!!val && !hasDialogRowInDOM(cid)) scheduleDialogsReload();
 }
 
 function loadPersistedDrafts() {
@@ -443,28 +649,28 @@ function restoreDraftForChat(chatId) {
 }
 
 /* =========================
-   Upload progress helpers
+   Upload progress (ONLY on X button)
    ========================= */
 
-function showUpload(name) {
-  if (!uploadBar) return;
-  uploadBar.style.display = "block";
-  if (uploadName) uploadName.textContent = name ? `Uploading: ${name}` : "Uploading…";
-  if (uploadPct) uploadPct.textContent = "0%";
-  if (uploadFill) uploadFill.style.width = "0%";
+function showUploadUI() {
   disableSend(true);
+  if (sfRemove) {
+    sfRemove.classList.add("uploading");
+    setBtnProgress(0);
+  }
 }
 
 function setUploadProgress(pct) {
-  const v = Math.max(0, Math.min(100, pct || 0));
-  if (uploadPct) uploadPct.textContent = `${v}%`;
-  if (uploadFill) uploadFill.style.width = `${v}%`;
+  setBtnProgress(pct);
 }
 
-function hideUpload() {
-  if (!uploadBar) return;
-  uploadBar.style.display = "none";
+function hideUploadUI() {
   disableSend(false);
+  if (sfRemove) {
+    sfRemove.classList.remove("uploading");
+    sfRemove.classList.add("done");
+    setTimeout(() => sfRemove && sfRemove.classList.remove("done"), 350);
+  }
 }
 
 /* =========================
@@ -472,8 +678,8 @@ function hideUpload() {
    ========================= */
 
 async function register() {
-  const username = (u.value || "").trim();
-  const password = (p.value || "").trim();
+  const username = (u?.value || "").trim();
+  const password = (p?.value || "").trim();
   const by = birthYear ? (birthYear.value || "").trim() : "";
   const av = avatarInput && avatarInput.files ? avatarInput.files[0] : null;
 
@@ -497,15 +703,18 @@ async function register() {
     connectWS();
     await loadDialogs();
 
-    if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
+    setTab("account");
   } else {
     alert("Registered. Now login.");
+    setAuthMode("login");
   }
 }
 
 async function login() {
-  const username = (u.value || "").trim();
-  const password = (p.value || "").trim();
+  const username = (u?.value || "").trim();
+  const password = (p?.value || "").trim();
+
+  if (!username || !password) return alert("Введите username и password");
 
   const r = await fetch(API + "/auth/login", {
     method: "POST",
@@ -523,7 +732,7 @@ async function login() {
   connectWS();
   await loadDialogs();
 
-  if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
+  setTab("account");
 }
 
 async function loadMe() {
@@ -556,7 +765,8 @@ function logout() {
 
   clearSelectedFileUI();
 
-  if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
+  setTab("account");
+  setAuthMode("login");
 }
 
 async function saveProfile() {
@@ -642,9 +852,7 @@ function connectWS() {
         if (!(me && senderId && senderId === me.id)) {
           setUnread(cid, true);
         }
-        if (!hasDialogRowInDOM(cid)) {
-          scheduleDialogsReload("ws:new_message_unknown_dialog");
-        }
+        if (!hasDialogRowInDOM(cid)) scheduleDialogsReload();
       }
     }
 
@@ -684,7 +892,7 @@ function wsSend(obj) {
 }
 
 /* =========================
-   Poll fallback (when WS is not open)
+   Poll fallback
    ========================= */
 
 function startChatPoll() {
@@ -760,7 +968,7 @@ function renderAvatarSpan(userObj, sizePx = 22) {
 
 async function search() {
   if (!token) return alert("Login first");
-  const query = (q.value || "").trim();
+  const query = (q?.value || "").trim();
 
   const r = await fetch(API + `/users/search?q=${encodeURIComponent(query)}`, {
     headers: { Authorization: "Bearer " + token },
@@ -770,6 +978,7 @@ async function search() {
 
   const list = await r.json();
 
+  if (!searchRes) return;
   searchRes.innerHTML = list
     .map((uu) => {
       const safeName = String(uu.username || "").replaceAll("'", "");
@@ -796,24 +1005,6 @@ async function startDM(otherId, username) {
   if (cid) openChat(cid, otherId, username);
 }
 
-function paintUnreadBadge(chatId, show) {
-  const cid = normChatId(chatId);
-  if (!cid) return;
-
-  const el = document.querySelector(`.item[data-chatid="${cid}"]`);
-  if (!el) return;
-
-  const row = el.querySelector(".dialogRow");
-  if (!row) return;
-
-  const old = row.querySelector(".unreadBadge");
-  if (!show) {
-    if (old) old.remove();
-    return;
-  }
-  if (!old) row.insertAdjacentHTML("beforeend", `<span class="unreadBadge">NEW</span>`);
-}
-
 async function loadDialogs() {
   if (!token) return;
 
@@ -822,6 +1013,7 @@ async function loadDialogs() {
 
   const list = await r.json();
 
+  if (!dialogs) return;
   dialogs.innerHTML = list
     .map((d) => {
       const cid = normChatId(d.chat_id);
@@ -884,25 +1076,27 @@ async function openChat(chatId, otherId, title) {
   setTypingUI("");
   setOnlineUI(false);
 
-  msgs.innerHTML = `<div class="loading">Loading…</div>`;
+  if (msgs) msgs.innerHTML = `<div class="loading">Loading…</div>`;
 
   wsSend({ type: "presence:subscribe", chat_id: cid });
 
   await loadMessagesPage();
 
-  msgs.scrollTop = msgs.scrollHeight;
+  if (msgs) msgs.scrollTop = msgs.scrollHeight;
   await maybeMarkRead();
 
-  msgs.onscroll = async () => {
-    if (msgs.scrollTop < 40 && nextBeforeId) {
-      const prevHeight = msgs.scrollHeight;
-      await loadMessagesPage(nextBeforeId, true);
-      msgs.scrollTop = msgs.scrollHeight - prevHeight + msgs.scrollTop;
-    }
-    await maybeMarkRead();
-  };
+  if (msgs) {
+    msgs.onscroll = async () => {
+      if (msgs.scrollTop < 40 && nextBeforeId) {
+        const prevHeight = msgs.scrollHeight;
+        await loadMessagesPage(nextBeforeId, true);
+        msgs.scrollTop = msgs.scrollHeight - prevHeight + msgs.scrollTop;
+      }
+      await maybeMarkRead();
+    };
+  }
 
-  if (window.ui && typeof window.ui.showChatMobile === "function") window.ui.showChatMobile();
+  showChatMobile();
   startChatPoll();
 
   updateSendVisibility();
@@ -923,13 +1117,15 @@ async function loadMessagesPage(beforeId = null, prepend = false) {
   otherLastRead = j.read_state?.other_last_read || otherLastRead;
 
   const items = j.items || [];
-  if (!prepend) msgs.innerHTML = "";
+  if (!prepend && msgs) msgs.innerHTML = "";
 
-  if (nextBeforeId) {
+  if (msgs && nextBeforeId) {
     const topHint = `<div class="loading" id="loadmore">Scroll up to load more…</div>`;
     if (prepend) msgs.insertAdjacentHTML("afterbegin", topHint);
     else msgs.insertAdjacentHTML("beforeend", topHint);
   }
+
+  if (!msgs) return;
 
   if (prepend) {
     const html = items.map((m) => renderMessageHTML(m)).join("");
@@ -966,7 +1162,6 @@ function renderAttachments(atts) {
   );
 }
 
-/* --- Time helpers (MSK) --- */
 const _mskFmt = new Intl.DateTimeFormat("ru-RU", {
   timeZone: "Europe/Moscow",
   hour: "2-digit",
@@ -1107,13 +1302,15 @@ async function uploadSelectedFile() {
   const f = file && file.files && file.files[0];
   if (!f) return null;
 
-  showUpload(f.name);
+  showUploadUI();
 
   const form = new FormData();
   form.append("file", f);
 
   return await new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    currentUploadXhr = xhr;
+
     xhr.open("POST", API + "/files/upload");
     xhr.setRequestHeader("Authorization", "Bearer " + token);
 
@@ -1125,6 +1322,7 @@ async function uploadSelectedFile() {
     };
 
     xhr.onload = () => {
+      currentUploadXhr = null;
       try {
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve(JSON.parse(xhr.responseText));
@@ -1136,10 +1334,20 @@ async function uploadSelectedFile() {
       }
     };
 
-    xhr.onerror = () => reject(new Error("Network error"));
+    xhr.onerror = () => {
+      currentUploadXhr = null;
+      reject(new Error("Network error"));
+    };
+
+    xhr.onabort = () => {
+      currentUploadXhr = null;
+      reject(new Error("Upload cancelled"));
+    };
+
     xhr.send(form);
   }).finally(() => {
-    hideUpload();
+    hideUploadUI();
+    setBtnProgress(0);
   });
 }
 
@@ -1197,6 +1405,7 @@ async function sendMessage() {
     isSending = false;
     disableSend(false);
     alert("Send failed: network/timeout");
+    updateSendVisibility();
     return;
   }
 
@@ -1207,6 +1416,7 @@ async function sendMessage() {
     text.value = prevText;
     saveDraftForCurrentChat();
     alert("Send failed: " + (await readError(r)));
+    updateSendVisibility();
     return;
   }
 
@@ -1225,65 +1435,92 @@ async function sendMessage() {
 }
 
 /* =========================
-   Wire buttons
+   Wire buttons + inputs
    ========================= */
 
-btnRegister && (btnRegister.onclick = register);
-btnLogin && (btnLogin.onclick = login);
-btnFind && (btnFind.onclick = search);
-btnReloadDialogs && (btnReloadDialogs.onclick = async () => await loadDialogs());
-btnSend && (btnSend.onclick = () => sendMessage());
+function bindUI() {
+  tabChats && tabChats.addEventListener("click", () => setTab("chats"));
+  tabAccount && tabAccount.addEventListener("click", () => setTab("account"));
 
-btnLogout && (btnLogout.onclick = logout);
-btnSaveProfile && (btnSaveProfile.onclick = saveProfile);
+  btnBack && btnBack.addEventListener("click", showListMobile);
 
-// ✅ preview выбранного файла в чате
-if (file) {
-  file.addEventListener("change", () => {
-    const f = file.files && file.files[0];
-    showSelectedFileUI(f || null);
-    updateSendVisibility();
-  });
-}
-sfRemove && sfRemove.addEventListener("click", () => {
-  clearSelectedFileUI();
-  updateSendVisibility();
-});
+  authModeLogin && authModeLogin.addEventListener("click", () => setAuthMode("login"));
+  authModeRegister && authModeRegister.addEventListener("click", () => setAuthMode("register"));
 
-if (text) {
-  text.addEventListener("compositionstart", () => { isComposing = true; });
-  text.addEventListener("compositionend", () => {
-    isComposing = false;
-    saveDraftForCurrentChat();
-  });
+  btnRegister && (btnRegister.onclick = register);
+  btnLogin && (btnLogin.onclick = login);
 
-  text.addEventListener("input", () => {
-    saveDraftForCurrentChat();
-    updateSendVisibility();
+  btnFind && (btnFind.onclick = search);
+  btnReloadDialogs && (btnReloadDialogs.onclick = async () => await loadDialogs());
+  btnSend && (btnSend.onclick = () => sendMessage());
 
-    if (!ws || ws.readyState !== 1 || !currentChatId) return;
-    if (!isDialogVisible(currentChatId)) return;
+  btnLogout && (btnLogout.onclick = logout);
+  btnSaveProfile && (btnSaveProfile.onclick = saveProfile);
 
-    wsSend({ type: "typing:start", chat_id: currentChatId });
-    clearTimeout(typingTimer);
-    typingTimer = setTimeout(() => {
-      wsSend({ type: "typing:stop", chat_id: currentChatId });
-    }, 900);
-  });
+  if (file) {
+    file.addEventListener("change", () => {
+      const f = file.files && file.files[0];
+      showSelectedFileUI(f || null);
+      updateSendVisibility();
+    });
+  }
 
-  text.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      if (isComposing) return;
-      e.preventDefault();
-      sendMessage();
+  // cancel upload or remove file
+  sfRemove && sfRemove.addEventListener("click", () => {
+    if (currentUploadXhr) {
+      try { currentUploadXhr.abort(); } catch (_) {}
     }
+    clearSelectedFileUI();
+    updateSendVisibility();
   });
-}
 
-btnBack &&
-  btnBack.addEventListener("click", () => {
-    if (window.ui && typeof window.ui.showListMobile === "function") window.ui.showListMobile();
-  });
+  if (text) {
+    text.addEventListener("compositionstart", () => { isComposing = true; });
+    text.addEventListener("compositionend", () => {
+      isComposing = false;
+      saveDraftForCurrentChat();
+    });
+
+    text.addEventListener("input", () => {
+      saveDraftForCurrentChat();
+      updateSendVisibility();
+
+      if (!ws || ws.readyState !== 1 || !currentChatId) return;
+      if (!isDialogVisible(currentChatId)) return;
+
+      wsSend({ type: "typing:start", chat_id: currentChatId });
+      clearTimeout(typingTimer);
+      typingTimer = setTimeout(() => {
+        wsSend({ type: "typing:stop", chat_id: currentChatId });
+      }, 900);
+    });
+
+    text.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        if (isComposing) return;
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    text.addEventListener("focus", () => {
+      _isTextFocused = true;
+      applyComposerFocusUI(true);
+      requestAnimationFrame(() => {
+        setViewportVars();
+        try {
+          if (msgs && isNearBottom()) msgs.scrollTop = msgs.scrollHeight;
+        } catch (_) {}
+      });
+    });
+
+    text.addEventListener("blur", () => {
+      _isTextFocused = false;
+      applyComposerFocusUI(false);
+      requestAnimationFrame(setViewportVars);
+    });
+  }
+}
 
 /* =========================
    Boot
@@ -1293,9 +1530,12 @@ btnBack &&
   loadPersistedUnread();
   loadPersistedDrafts();
 
-  if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
+  fillYears();
+  bindAvatarPreviews();
+  bindUI();
 
-  if (file && file.files && file.files[0]) showSelectedFileUI(file.files[0]);
+  setTab("account");
+  setAuthMode("login");
 
   if (token) {
     await loadMe();
@@ -1309,6 +1549,7 @@ btnBack &&
     paintProfile();
   }
 
+  setViewportVars();
   updateSendVisibility();
 })();
 
