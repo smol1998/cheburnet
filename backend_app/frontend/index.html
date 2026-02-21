@@ -42,7 +42,6 @@
       --glassSat:  170%;
       --glassBright: 108%;
 
-      /* ✅ viewport stability */
       --appVh: 1vh;
       --kb: 0px;
       --lift: 0px;
@@ -462,7 +461,6 @@
     }
     .fileBtn input[type="file"]{ position:absolute; inset:0; opacity:0; cursor:pointer; }
 
-    /* Auth layout */
     .authStack{ display:flex; flex-direction:column; gap:12px; }
     .authSwitch{
       display:grid;
@@ -562,7 +560,6 @@
       margin-top:2px;
     }
 
-    /* Chats */
     .chatsLayout{
       width:100%;
       display:grid;
@@ -587,6 +584,7 @@
       backdrop-filter: blur(14px);
       -webkit-backdrop-filter: blur(14px);
       position:relative;
+      user-select:none;
     }
     .item:hover{
       border-color:rgba(209,254,23,.28);
@@ -608,7 +606,6 @@
       min-height:0;
     }
 
-    /* ✅ TG-LIKE CHAT HEADER */
     .chatHeader{
       padding:10px 12px;
       display:flex;
@@ -623,7 +620,6 @@
       z-index:3;
     }
 
-    /* back fixed at left */
     .backBtn{
       display:none;
       height:40px;
@@ -643,7 +639,6 @@
     .backBtn:hover{ background:rgba(255,255,255,.07); border-color:rgba(209,254,23,.20); }
     .backBtn:active{ transform: translateY(1px); }
 
-    /* avatar */
     .chatAvatar{
       width:38px;
       height:38px;
@@ -658,7 +653,6 @@
     }
     .chatAvatar img{ width:100%; height:100%; object-fit:cover; display:block; }
 
-    /* name + status stack */
     .chatTitleWrap{
       min-width:0;
       display:flex;
@@ -703,7 +697,6 @@
 
     .onlineText{ white-space:nowrap; }
 
-    /* messages */
     .messages{
       flex:1;
       min-height:0;
@@ -715,6 +708,7 @@
       position:relative;
       z-index:3;
       overscroll-behavior: contain;
+      scroll-behavior: auto;
     }
     .loading{
       align-self:center;
@@ -756,8 +750,8 @@
       border-radius:12px;
       border:1px solid rgba(255,255,255,.10);
     }
+    .attachment img{ height:auto; }
 
-    /* ✅ Composer (Telegram-like): input + attach + send (in one row) */
     .composer{
       padding:10px 12px;
       border-top:1px solid rgba(255,255,255,.10);
@@ -784,11 +778,8 @@
       padding-bottom: calc(14px + var(--lift));
     }
 
-    .composerLeft{
-      min-width:0;
-    }
+    .composerLeft{ min-width:0; }
 
-    /* Selected file (единственный вариант UI) */
     .selectedFile{
       grid-column:1 / -1;
       display:none;
@@ -853,9 +844,8 @@
       max-width: 52vw;
     }
 
-    /* progress around X button */
     .sfRemove{
-      --p: 0; /* 0..100 */
+      --p: 0;
       position:relative;
       height:36px;
       width:36px;
@@ -953,7 +943,6 @@
       color:var(--accent);
     }
 
-    /* ✅ Small attach button (icon-only) */
     .attachBtn{
       height:40px;
       width:40px;
@@ -971,12 +960,12 @@
       transition: transform .16s ease, background .16s ease, border-color .16s ease, opacity .16s ease;
       position:relative;
       overflow:hidden;
+      user-select:none;
     }
     .attachBtn:hover{ background:rgba(255,255,255,.07); border-color:rgba(209,254,23,.18); }
     .attachBtn:active{ transform: translateY(1px); }
     .attachBtn input[type="file"]{ position:absolute; inset:0; opacity:0; cursor:pointer; }
 
-    /* ✅ Send button appears smoothly (Telegram-like) */
     .sendIconBtn{
       height:40px;
       width:40px;
@@ -1042,7 +1031,6 @@
     @media (max-width:520px){
       .row2{ grid-template-columns:1fr; }
       .searchRow{ grid-template-columns:1fr 92px; }
-
       .authRow2{ grid-template-columns: 1fr; }
     }
   </style>
@@ -1111,7 +1099,6 @@
           <div class="liquidLayer"></div>
           <div class="hoverSweep"></div>
 
-          <!-- ✅ TG-like header (back + avatar + name + status under name) -->
           <div class="chatHeader" role="banner" aria-label="Chat header">
             <button class="backBtn" id="btnBack" type="button" aria-label="Back">←</button>
 
@@ -1123,8 +1110,6 @@
               <div class="statusRow" aria-label="Status">
                 <span class="dot" id="onlineDot"></span>
                 <span class="onlineText" id="onlineText">—</span>
-
-                <!-- оставляем для совместимости (JS теперь не выводит сюда) -->
                 <span id="typingText" style="display:none"></span>
               </div>
             </div>
@@ -1135,8 +1120,6 @@
           </div>
 
           <div class="composer">
-
-            <!-- ✅ единственный блок выбранного файла -->
             <div class="selectedFile" id="selectedFile">
               <div class="sfLeft">
                 <div class="sfIcon" id="sfIcon">📎</div>
@@ -1155,13 +1138,11 @@
               <input id="text" class="input" placeholder="Сообщение…" />
             </div>
 
-            <!-- ✅ Small attach button right of input -->
             <label class="attachBtn" aria-label="Attach file" title="Attach">
               📎
               <input id="file" type="file" />
             </label>
 
-            <!-- ✅ Send button further right -->
             <button class="sendIconBtn isHidden" id="btnSend" type="button" aria-label="Send">➤</button>
           </div>
         </main>
@@ -1264,6 +1245,7 @@
 
   </div>
 
-  <script src="/static/app.js?v=4009"></script>
+  <!-- важно: этот файл ниже -->
+  <script src="/static/app.js?v=5000"></script>
 </body>
 </html>

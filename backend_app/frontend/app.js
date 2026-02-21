@@ -2,7 +2,17 @@
    CONFIG
    ========================= */
 
+// Base API prefix. If backend served on same origin, leave "".
 const API = "";
+
+/**
+ * Files auth mode:
+ * - "query_token"  -> keep current behavior: /files/:id?token=...
+ * - "plain"        -> do not append token. Use only if backend supports public or cookie auth for /files/*
+ *
+ * IMPORTANT: For private files, professional solution is signed URLs or httpOnly cookie auth.
+ */
+const FILES_AUTH_MODE = "query_token";
 
 /* =========================
    STATE
@@ -41,9 +51,12 @@ let authMode = "login";
 // upload cancel
 let currentUploadXhr = null;
 
-// ✅ Presence/typing state for TG-like header
+// Presence/typing state for header
 let _otherOnline = false;
 let _isTyping = false;
+
+// Poll capabilities
+let _supportsAfterId = null; // unknown until tested
 
 /* =========================
    DOM
@@ -79,7 +92,6 @@ const searchRes = document.getElementById("searchRes");
 
 const onlineDot = document.getElementById("onlineDot");
 const onlineText = document.getElementById("onlineText");
-// typingText остается в DOM как id, но теперь статус показываем в onlineText (как в TG)
 const typingText = document.getElementById("typingText");
 
 const btnRegister = document.getElementById("btnRegister");
@@ -200,7 +212,7 @@ function fileUrl(pathOrUrl, v = null) {
   const sep1 = pathOrUrl.includes("?") ? "&" : "?";
   let out = API + pathOrUrl;
 
-  if (token) out += `${sep1}token=${encodeURIComponent(token)}`;
+  if (FILES_AUTH_MODE === "query_token" && token) out += `${sep1}token=${encodeURIComponent(token)}`;
 
   if (v !== null && v !== undefined && v !== "") {
     const sep2 = out.includes("?") ? "&" : "?";
@@ -215,6 +227,33 @@ function ensureAvatarPath(uobj) {
   if (uobj.avatar_url) return uobj.avatar_url;
   if (uobj.avatar_file_id) return `/files/${uobj.avatar_file_id}`;
   return null;
+}
+
+function clearNode(el) {
+  if (!el) return;
+  while (el.firstChild) el.removeChild(el.firstChild);
+}
+
+function mk(tag, props = {}, children = []) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === "class") el.className = v;
+    else if (k === "text") el.textContent = v;
+    else if (k === "html") el.innerHTML = v; // only for trusted static html
+    else if (k === "dataset" && v && typeof v === "object") {
+      for (const [dk, dv] of Object.entries(v)) el.dataset[dk] = String(dv);
+    } else if (k.startsWith("on") && typeof v === "function") {
+      el.addEventListener(k.slice(2), v);
+    } else if (v !== null && v !== undefined) {
+      el.setAttribute(k, String(v));
+    }
+  }
+  for (const c of children) {
+    if (c === null || c === undefined) continue;
+    if (typeof c === "string") el.appendChild(document.createTextNode(c));
+    else el.appendChild(c);
+  }
+  return el;
 }
 
 /* =========================
@@ -303,32 +342,29 @@ function fillYears() {
   const years = [];
   for (let y = now - 10; y >= now - 90; y--) years.push(y);
 
-  if (birthYear) {
+  function fillSelect(sel) {
+    if (!sel) return;
     for (const y of years) {
       const opt = document.createElement("option");
       opt.value = String(y);
       opt.textContent = String(y);
-      birthYear.appendChild(opt);
+      sel.appendChild(opt);
     }
   }
 
-  if (profileBirthYear) {
-    for (const y of years) {
-      const opt = document.createElement("option");
-      opt.value = String(y);
-      opt.textContent = String(y);
-      profileBirthYear.appendChild(opt);
-    }
-  }
+  fillSelect(birthYear);
+  fillSelect(profileBirthYear);
 }
 
 function bindAvatarPreviews() {
   if (avatarInput && avatarPreview) {
     avatarInput.addEventListener("change", () => {
       const f = avatarInput.files && avatarInput.files[0];
-      if (!f) { avatarPreview.innerHTML = "👤"; return; }
+      if (!f) { avatarPreview.textContent = "👤"; return; }
       const url = URL.createObjectURL(f);
-      avatarPreview.innerHTML = `<img src="${url}" alt="avatar">`;
+      clearNode(avatarPreview);
+      const img = mk("img", { src: url, alt: "avatar" });
+      avatarPreview.appendChild(img);
     });
   }
 
@@ -337,7 +373,9 @@ function bindAvatarPreviews() {
       const f = profileAvatarInput.files && profileAvatarInput.files[0];
       if (!f) return;
       const url = URL.createObjectURL(f);
-      profileAvatar.innerHTML = `<img src="${url}" alt="avatar">`;
+      clearNode(profileAvatar);
+      const img = mk("img", { src: url, alt: "avatar" });
+      profileAvatar.appendChild(img);
     });
   }
 }
@@ -463,12 +501,15 @@ function showSelectedFileUI(f) {
 
   selectedFile.title = f.name || "";
 
-  sfIcon.textContent = icon;
   revokeSelectedFileObjectUrl();
+  clearNode(sfIcon);
 
   if (f.type && f.type.startsWith("image/")) {
     selectedFileObjectUrl = URL.createObjectURL(f);
-    sfIcon.innerHTML = `<img src="${selectedFileObjectUrl}" alt="preview">`;
+    const img = mk("img", { src: selectedFileObjectUrl, alt: "preview" });
+    sfIcon.appendChild(img);
+  } else {
+    sfIcon.textContent = icon;
   }
 
   selectedFile.style.display = "flex";
@@ -495,15 +536,27 @@ function renderMiniMePill() {
 
   const path = ensureAvatarPath(me);
   const src = path ? fileUrl(path, me.avatar_file_id || Date.now()) : "";
-  const av = src
-    ? `<span class="meMiniAv"><img src="${src}" alt="me" onerror="this.onerror=null;this.parentElement.innerHTML='👤'"></span>`
-    : `<span class="meMiniAv">👤</span>`;
 
-  mePill.innerHTML = `${av}<span>@${escapeHtml(me.username)}</span>`;
+  clearNode(mePill);
+
+  const avSpan = mk("span", { class: "meMiniAv" });
+  if (src) {
+    const img = mk("img", { src, alt: "me" });
+    img.addEventListener("error", () => {
+      clearNode(avSpan);
+      avSpan.textContent = "👤";
+    });
+    avSpan.appendChild(img);
+  } else {
+    avSpan.textContent = "👤";
+  }
+
+  mePill.appendChild(avSpan);
+  mePill.appendChild(mk("span", { text: `@${me.username || ""}` }));
 }
 
 /* =========================
-   TG-like header status helpers
+   Header status helpers
    ========================= */
 
 function _paintHeaderStatus() {
@@ -511,7 +564,6 @@ function _paintHeaderStatus() {
 
   if (_isTyping) {
     onlineText.textContent = "typing…";
-    // как в TG: во время typing точку можно скрыть, чтобы не путалось с online/offline
     if (onlineDot) onlineDot.classList.add("isHidden");
     return;
   }
@@ -526,22 +578,20 @@ function setOnlineUI(on) {
   _paintHeaderStatus();
 }
 
-function setTypingUI(txt) {
-  const t = String(txt || "").trim();
-  _isTyping = !!t;
-
-  // typingText оставляем для совместимости (если где-то стили/логика)
-  if (typingText) typingText.textContent = "";
-
+function setTypingUI(on) {
+  _isTyping = !!on;
+  if (typingText) typingText.textContent = ""; // legacy placeholder
   _paintHeaderStatus();
 }
 
 function isNearBottom() {
+  if (!msgs) return true;
   const threshold = 80;
   return msgs.scrollHeight - (msgs.scrollTop + msgs.clientHeight) < threshold;
 }
 
 function getLastRenderedMessageId() {
+  if (!msgs) return 0;
   const nodes = msgs.querySelectorAll("[data-message-id]");
   if (!nodes.length) return 0;
   const lastId = parseInt(nodes[nodes.length - 1].getAttribute("data-message-id") || "0", 10);
@@ -571,7 +621,14 @@ function paintProfile() {
   if (profileAvatar) {
     const path = ensureAvatarPath(me);
     const src = path ? fileUrl(path, me.avatar_file_id || Date.now()) : "";
-    profileAvatar.innerHTML = src ? `<img src="${src}" alt="avatar" />` : `👤`;
+    clearNode(profileAvatar);
+    if (src) {
+      const img = mk("img", { src, alt: "avatar" });
+      img.addEventListener("error", () => { profileAvatar.textContent = "👤"; });
+      profileAvatar.appendChild(img);
+    } else {
+      profileAvatar.textContent = "👤";
+    }
   }
 
   if (profileBirthYear) {
@@ -625,7 +682,7 @@ function paintUnreadBadge(chatId, show) {
     if (old) old.remove();
     return;
   }
-  if (!old) row.insertAdjacentHTML("beforeend", `<span class="unreadBadge">NEW</span>`);
+  if (!old) row.appendChild(mk("span", { class: "unreadBadge", text: "NEW" }));
 }
 
 function setUnread(chatId, val) {
@@ -843,6 +900,7 @@ function scheduleReconnect() {
 
 function connectWS() {
   try { if (ws) ws.close(); } catch (_) {}
+  ws = null;
 
   if (!token) return;
 
@@ -851,10 +909,13 @@ function connectWS() {
 
   ws.onopen = () => {
     wsRetry = 0;
+    // subscribe current chat if open
     if (currentChatId) wsSend({ type: "presence:subscribe", chat_id: currentChatId });
   };
 
-  ws.onclose = () => { scheduleReconnect(); };
+  ws.onclose = () => {
+    scheduleReconnect();
+  };
 
   ws.onerror = () => {
     try { ws.close(); } catch (_) {}
@@ -894,15 +955,15 @@ function connectWS() {
     if (data.type === "typing:start") {
       const cid = normChatId(data.chat_id);
       if (cid && cid === currentChatId && isDialogVisible(currentChatId)) {
-        setTypingUI("typing…");
+        setTypingUI(true);
         clearTimeout(typingTimer);
-        typingTimer = setTimeout(() => setTypingUI(""), 2000);
+        typingTimer = setTimeout(() => setTypingUI(false), 2200);
       }
     }
 
     if (data.type === "typing:stop") {
       const cid = normChatId(data.chat_id);
-      if (cid && cid === currentChatId && isDialogVisible(currentChatId)) setTypingUI("");
+      if (cid && cid === currentChatId && isDialogVisible(currentChatId)) setTypingUI(false);
     }
 
     if (data.type === "message:read") {
@@ -920,39 +981,23 @@ function wsSend(obj) {
 }
 
 /* =========================
-   Poll fallback
+   Poll fallback (adaptive + after_id if supported)
    ========================= */
+
+let _pollDelayMs = 2500;
+let _pollNoNewCount = 0;
 
 function startChatPoll() {
   stopChatPoll();
+  _pollDelayMs = 2500;
+  _pollNoNewCount = 0;
+
   pollTimer = setInterval(async () => {
     if (!token || !currentChatId) return;
     if (ws && ws.readyState === 1) return;
 
-    const lastId = getLastRenderedMessageId();
-    const url = new URL(API + `/chats/dm/${currentChatId}/messages`, location.origin);
-    url.searchParams.set("limit", "50");
-
-    try {
-      const r = await fetch(url.toString(), { headers: { Authorization: "Bearer " + token } });
-      if (!r.ok) return;
-
-      const j = await r.json();
-      otherLastRead = j.read_state?.other_last_read || otherLastRead;
-
-      const items = j.items || [];
-      for (const m of items) {
-        if (isDialogVisible(currentChatId)) {
-          if (m?.id && m.id > lastId && !document.querySelector(`.msg[data-message-id="${m.id}"]`)) {
-            renderMessage(m);
-          }
-        }
-      }
-
-      updateReadMarks();
-      await maybeMarkRead();
-    } catch (_) {}
-  }, 2500);
+    await pollOnce();
+  }, _pollDelayMs);
 }
 
 function stopChatPoll() {
@@ -960,11 +1005,81 @@ function stopChatPoll() {
   pollTimer = null;
 }
 
+async function pollOnce() {
+  const lastId = getLastRenderedMessageId();
+  const url = new URL(API + `/chats/dm/${currentChatId}/messages`, location.origin);
+  url.searchParams.set("limit", "50");
+
+  // Try after_id if we already know it is supported
+  if (_supportsAfterId === true) url.searchParams.set("after_id", String(lastId));
+
+  try {
+    const r = await fetch(url.toString(), { headers: { Authorization: "Bearer " + token } });
+
+    // If server rejects after_id, fallback and remember
+    if (!r.ok) {
+      if (_supportsAfterId === true) {
+        _supportsAfterId = false;
+      }
+      return;
+    }
+
+    const j = await r.json();
+    otherLastRead = j.read_state?.other_last_read || otherLastRead;
+
+    const items = j.items || [];
+
+    let appended = 0;
+    for (const m of items) {
+      if (!m?.id) continue;
+      if (document.querySelector(`.msg[data-message-id="${m.id}"]`)) continue;
+      // If after_id is not supported, items may include older messages too; only render new ones
+      if (m.id <= lastId) continue;
+
+      if (isDialogVisible(currentChatId)) {
+        renderMessage(m);
+        appended++;
+      }
+    }
+
+    updateReadMarks();
+    await maybeMarkRead();
+
+    // Learn support: if we asked after_id and got only new, ok. If we didn't ask, do a one-time probe later.
+    if (_supportsAfterId === null) {
+      // quick probe: if server ignored after_id, we'd see older ids; but we didn't send it.
+      // Do a single explicit probe next tick.
+      _supportsAfterId = false;
+      // Next time we open chat we can probe; keep conservative.
+    }
+
+    // Adaptive backoff
+    if (appended === 0) {
+      _pollNoNewCount++;
+      if (_pollNoNewCount >= 3) {
+        // increase interval up to 20s
+        const next = Math.min(20000, Math.round(_pollDelayMs * 1.6));
+        if (next !== _pollDelayMs) {
+          _pollDelayMs = next;
+          startChatPoll();
+        }
+      }
+    } else {
+      _pollNoNewCount = 0;
+      // return to base if we were slow
+      if (_pollDelayMs !== 2500) {
+        _pollDelayMs = 2500;
+        startChatPoll();
+      }
+    }
+  } catch (_) {}
+}
+
 /* =========================
    Avatars in dialogs
    ========================= */
 
-function renderAvatarSpan(userObj, sizePx = 22) {
+function renderAvatarNode(userObj, sizePx = 22) {
   const path = ensureAvatarPath(userObj);
   const v = userObj && userObj.avatar_file_id ? userObj.avatar_file_id : Date.now();
   const src = path ? fileUrl(path, v) : "";
@@ -974,24 +1089,39 @@ function renderAvatarSpan(userObj, sizePx = 22) {
     `overflow:hidden;display:inline-flex;align-items:center;justify-content:center;` +
     `border:1px solid rgba(255,255,255,.12);flex:0 0 auto;`;
 
+  const span = mk("span", { style: boxStyle });
+
   if (!src) {
-    return `<span style="${boxStyle};color:rgba(255,255,255,.35);font-weight:900;font-size:12px">?</span>`;
+    span.style.color = "rgba(255,255,255,.35)";
+    span.style.fontWeight = "900";
+    span.style.fontSize = "12px";
+    span.textContent = "?";
+    return span;
   }
 
-  return `
-    <span style="${boxStyle}">
-      <img
-        src="${src}"
-        alt="avatar"
-        style="width:100%;height:100%;object-fit:cover;display:block"
-        onerror="this.onerror=null; this.parentElement.innerHTML='?'; this.parentElement.style.color='rgba(255,255,255,.35)'; this.parentElement.style.fontWeight='900'; this.parentElement.style.fontSize='12px'; this.parentElement.style.display='inline-flex'; this.parentElement.style.alignItems='center'; this.parentElement.style.justifyContent='center';"
-      />
-    </span>
-  `;
+  const img = mk("img", {
+    src,
+    alt: "avatar",
+    style: "width:100%;height:100%;object-fit:cover;display:block",
+  });
+
+  img.addEventListener("error", () => {
+    clearNode(span);
+    span.style.color = "rgba(255,255,255,.35)";
+    span.style.fontWeight = "900";
+    span.style.fontSize = "12px";
+    span.style.display = "inline-flex";
+    span.style.alignItems = "center";
+    span.style.justifyContent = "center";
+    span.textContent = "?";
+  });
+
+  span.appendChild(img);
+  return span;
 }
 
 /* =========================
-   Search / Dialogs
+   Search / Dialogs (SAFE DOM RENDER)
    ========================= */
 
 async function search() {
@@ -1007,12 +1137,19 @@ async function search() {
   const list = await r.json();
 
   if (!searchRes) return;
-  searchRes.innerHTML = list
-    .map((uu) => {
-      const safeName = String(uu.username || "").replaceAll("'", "");
-      return `<div class="item" onclick="startDM(${uu.id}, '${safeName}')">@${escapeHtml(uu.username)}</div>`;
-    })
-    .join("");
+  clearNode(searchRes);
+
+  for (const uu of (list || [])) {
+    const row = mk("div", {
+      class: "item",
+      dataset: { userid: uu.id, username: uu.username || "" },
+    }, [
+      mk("span", { text: `@${uu.username || ""}` })
+    ]);
+
+    row.addEventListener("click", () => startDM(uu.id, uu.username || ""));
+    searchRes.appendChild(row);
+  }
 }
 
 async function startDM(otherId, username) {
@@ -1042,30 +1179,40 @@ async function loadDialogs() {
   const list = await r.json();
 
   if (!dialogs) return;
-  dialogs.innerHTML = list
-    .map((d) => {
-      const cid = normChatId(d.chat_id);
-      const other = d.other || {};
-      const online = d.other_online ? "online" : "";
+  clearNode(dialogs);
 
-      if (cid && other) otherByChatId.set(cid, other);
+  for (const d of (list || [])) {
+    const cid = normChatId(d.chat_id);
+    const other = d.other || {};
+    const online = !!d.other_online;
 
-      const hasUnread = cid ? unreadByChatId.get(cid) === true : false;
-      const safeName = String(other.username || "").replaceAll("'", "");
+    if (cid && other) otherByChatId.set(cid, other);
 
-      const av = renderAvatarSpan(other, 22);
+    const hasUnread = cid ? unreadByChatId.get(cid) === true : false;
 
-      return `<div class="item" data-chatid="${cid ?? ""}" onclick="openChat(${cid}, ${other.id}, '${safeName}')">
-        <div class="dialogRow" style="display:flex;align-items:center;gap:8px">
-          <span class="dot ${online}"></span>
-          ${av}
-          <div style="font-weight:600">@${escapeHtml(other.username || "")}</div>
-          ${hasUnread ? `<span class="unreadBadge">NEW</span>` : ``}
-        </div>
-        <small>chat_id: ${cid ?? "—"}</small>
-      </div>`;
-    })
-    .join("");
+    const row = mk("div", {
+      class: "item",
+      dataset: { chatid: cid ?? "" },
+    });
+
+    const dialogRow = mk("div", { class: "dialogRow", style: "display:flex;align-items:center;gap:8px" });
+
+    const dot = mk("span", { class: `dot ${online ? "online" : ""}` });
+    const av = renderAvatarNode(other, 22);
+    const name = mk("div", { style: "font-weight:600", text: `@${other.username || ""}` });
+
+    dialogRow.appendChild(dot);
+    dialogRow.appendChild(av);
+    dialogRow.appendChild(name);
+
+    if (hasUnread) dialogRow.appendChild(mk("span", { class: "unreadBadge", text: "NEW" }));
+
+    row.appendChild(dialogRow);
+    row.appendChild(mk("small", { text: `chat_id: ${cid ?? "—"}` }));
+
+    row.addEventListener("click", () => openChat(cid, other.id, other.username || ""));
+    dialogs.appendChild(row);
+  }
 
   for (const [cid, v] of unreadByChatId.entries()) {
     paintUnreadBadge(cid, v === true);
@@ -1085,127 +1232,17 @@ function setChatHeaderUser(other) {
     const path = ensureAvatarPath(other);
     const v = other && other.avatar_file_id ? other.avatar_file_id : Date.now();
     const src = path ? fileUrl(path, v) : "";
-    chatAvatar.innerHTML = src
-      ? `<img src="${src}" alt="avatar" onerror="this.onerror=null;this.parentElement.innerHTML='👤'">`
-      : "👤";
+
+    clearNode(chatAvatar);
+    if (src) {
+      const img = mk("img", { src, alt: "avatar" });
+      img.addEventListener("error", () => { chatAvatar.textContent = "👤"; });
+      chatAvatar.appendChild(img);
+    } else {
+      chatAvatar.textContent = "👤";
+    }
   }
 }
-
-async function openChat(chatId, otherId, title) {
-  const cid = normChatId(chatId);
-  if (!cid) return;
-
-  saveDraftForCurrentChat();
-
-  currentChatId = cid;
-  currentOtherId = otherId;
-  nextBeforeId = null;
-  otherLastRead = 0;
-
-  // reset header presence/typing state
-  _otherOnline = false;
-  _isTyping = false;
-  setOnlineUI(false);
-  setTypingUI("");
-
-  setUnread(cid, false);
-  restoreDraftForChat(cid);
-
-  const other = otherByChatId.get(cid) || { id: otherId, username: title, avatar_url: null, avatar_file_id: null };
-
-  setChatHeaderUser(other);
-
-  if (msgs) msgs.innerHTML = `<div class="loading">Loading…</div>`;
-
-  wsSend({ type: "presence:subscribe", chat_id: cid });
-
-  await loadMessagesPage();
-
-  if (msgs) msgs.scrollTop = msgs.scrollHeight;
-  await maybeMarkRead();
-
-  if (msgs) {
-    msgs.onscroll = async () => {
-      if (msgs.scrollTop < 40 && nextBeforeId) {
-        const prevHeight = msgs.scrollHeight;
-        await loadMessagesPage(nextBeforeId, true);
-        msgs.scrollTop = msgs.scrollHeight - prevHeight + msgs.scrollTop;
-      }
-      await maybeMarkRead();
-    };
-  }
-
-  showChatMobile();
-  startChatPoll();
-
-  updateSendVisibility();
-}
-
-async function loadMessagesPage(beforeId = null, prepend = false) {
-  if (!currentChatId) return;
-
-  const url = new URL(API + `/chats/dm/${currentChatId}/messages`, location.origin);
-  url.searchParams.set("limit", "50");
-  if (beforeId) url.searchParams.set("before_id", String(beforeId));
-
-  const r = await fetch(url.toString(), { headers: { Authorization: "Bearer " + token } });
-  if (!r.ok) return alert("Load messages failed: " + (await readError(r)));
-
-  const j = await r.json();
-  nextBeforeId = j.next_before_id;
-  otherLastRead = j.read_state?.other_last_read || otherLastRead;
-
-  const items = j.items || [];
-  if (!prepend && msgs) msgs.innerHTML = "";
-
-  if (msgs && nextBeforeId) {
-    const topHint = `<div class="loading" id="loadmore">Scroll up to load more…</div>`;
-    if (prepend) msgs.insertAdjacentHTML("afterbegin", topHint);
-    else msgs.insertAdjacentHTML("beforeend", topHint);
-  }
-
-  if (!msgs) return;
-
-  if (prepend) {
-    const html = items.map((m) => renderMessageHTML(m)).join("");
-    const lm = document.getElementById("loadmore");
-    if (lm) lm.insertAdjacentHTML("afterend", html);
-    else msgs.insertAdjacentHTML("afterbegin", html);
-  } else {
-    items.forEach((m) => renderMessage(m));
-  }
-
-  updateReadMarks();
-  applyGroupingAll();
-}
-
-function renderAttachments(atts) {
-  if (!atts || !atts.length) return "";
-  return (
-    `<div class="attachment">` +
-    atts
-      .map((a) => {
-        const url = fileUrl(a.url, a.id || Date.now());
-        if (a.mime && a.mime.startsWith("image/")) {
-          return `<div><img src="${url}" alt="${escapeHtml(a.name || "image")}" /></div>`;
-        }
-        if (a.mime && a.mime.startsWith("video/")) {
-          return `<div><video src="${url}" controls></video></div>`;
-        }
-        return `<div style="margin-top:8px">
-          <a href="${url}" target="_blank" rel="noopener">📎 ${escapeHtml(a.name || "file")}</a>
-        </div>`;
-      })
-      .join("") +
-    `</div>`
-  );
-}
-
-const _mskFmt = new Intl.DateTimeFormat("ru-RU", {
-  timeZone: "Europe/Moscow",
-  hour: "2-digit",
-  minute: "2-digit",
-});
 
 function _parseServerISO(iso) {
   if (!iso) return null;
@@ -1214,6 +1251,12 @@ function _parseServerISO(iso) {
   const d = new Date(s);
   return Number.isFinite(d.getTime()) ? d : null;
 }
+
+const _mskFmt = new Intl.DateTimeFormat("ru-RU", {
+  timeZone: "Europe/Moscow",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 function formatTimeMSK(iso) {
   const d = _parseServerISO(iso);
@@ -1228,6 +1271,7 @@ function _setMetaVisible(node, visible) {
 }
 
 function applyGroupingAll() {
+  if (!msgs) return;
   const nodes = Array.from(msgs.querySelectorAll(".msg[data-message-id]"));
   nodes.forEach((n) => _setMetaVisible(n, true));
 
@@ -1251,6 +1295,7 @@ function applyGroupingAll() {
 }
 
 function applyGroupingTail() {
+  if (!msgs) return;
   const nodes = Array.from(msgs.querySelectorAll(".msg[data-message-id]"));
   if (nodes.length < 2) return;
 
@@ -1278,31 +1323,90 @@ function applyGroupingTail() {
   }
 }
 
-function renderMessageHTML(m) {
+function renderAttachmentsNode(atts) {
+  if (!atts || !atts.length) return null;
+
+  const box = mk("div", { class: "attachment" });
+
+  for (const a of atts) {
+    const url = fileUrl(a.url, a.id || Date.now());
+
+    if (a.mime && a.mime.startsWith("image/")) {
+      const wrap = mk("div");
+      const img = mk("img", { src: url, alt: a.name || "image", loading: "lazy", decoding: "async" });
+      // avoid scroll jump: if user is at bottom, keep bottom after image load
+      img.addEventListener("load", () => {
+        if (isNearBottom() && msgs) msgs.scrollTop = msgs.scrollHeight;
+      });
+      wrap.appendChild(img);
+      box.appendChild(wrap);
+      continue;
+    }
+
+    if (a.mime && a.mime.startsWith("video/")) {
+      const wrap = mk("div");
+      const v = mk("video", { src: url, controls: "true", preload: "metadata" });
+      wrap.appendChild(v);
+      box.appendChild(wrap);
+      continue;
+    }
+
+    const linkWrap = mk("div", { style: "margin-top:8px" });
+    const link = mk("a", { href: url, target: "_blank", rel: "noopener" }, [
+      `📎 ${a.name || "file"}`
+    ]);
+    linkWrap.appendChild(link);
+    box.appendChild(linkWrap);
+  }
+
+  return box;
+}
+
+function renderMessageNode(m) {
   const isMe = me && m.sender_id === me.id;
-  const cls = isMe ? "me" : "";
+  const cls = isMe ? "msg me" : "msg";
 
   const d = _parseServerISO(m.created_at);
   const ts = d ? d.getTime() : 0;
   const time = formatTimeMSK(m.created_at);
-  const atts = renderAttachments(m.attachments);
 
-  const readMark = isMe ? `<span data-msgid="${m.id}" class="readmark"><small>✓</small></span>` : "";
-  const textPart = m.text ? `<div class="msgText">${escapeHtml(m.text)}</div>` : "";
+  const root = mk("div", {
+    class: cls,
+    dataset: { messageId: m.id, senderId: m.sender_id, ts: ts },
+  });
 
-  return `<div class="msg ${cls}" data-message-id="${m.id}" data-sender-id="${m.sender_id}" data-ts="${ts}">
-    ${textPart}
-    ${atts}
-    <div class="msgMeta" style="display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:6px">
-      ${time ? `<small class="msgTime">${escapeHtml(time)}</small>` : ""}
-      ${readMark}
-    </div>
-  </div>`;
+  if (m.text) {
+    root.appendChild(mk("div", { class: "msgText", text: m.text }));
+  }
+
+  const attsNode = renderAttachmentsNode(m.attachments);
+  if (attsNode) root.appendChild(attsNode);
+
+  const meta = mk("div", {
+    class: "msgMeta",
+    style: "display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:6px",
+  });
+
+  if (time) meta.appendChild(mk("small", { class: "msgTime", text: time }));
+
+  if (isMe) {
+    const mark = mk("span", { class: "readmark", dataset: { msgid: m.id } });
+    mark.appendChild(mk("small", { text: "✓" }));
+    meta.appendChild(mark);
+  }
+
+  root.appendChild(meta);
+  return root;
 }
 
 function renderMessage(m) {
-  msgs.insertAdjacentHTML("beforeend", renderMessageHTML(m));
-  if (isNearBottom()) msgs.scrollTop = msgs.scrollHeight;
+  if (!msgs) return;
+  const shouldStickBottom = isNearBottom();
+
+  msgs.appendChild(renderMessageNode(m));
+
+  if (shouldStickBottom) msgs.scrollTop = msgs.scrollHeight;
+
   updateReadMarks();
   applyGroupingTail();
 }
@@ -1310,8 +1414,11 @@ function renderMessage(m) {
 function updateReadMarks() {
   if (!me) return;
   document.querySelectorAll(".readmark").forEach((el) => {
-    const id = parseInt(el.getAttribute("data-msgid") || "0", 10);
-    el.innerHTML = `<small>${otherLastRead >= id ? "✓✓" : "✓"}</small>`;
+    const id = parseInt(el.getAttribute("data-msgid") || el.dataset.msgid || "0", 10);
+    const s = (otherLastRead >= id) ? "✓✓" : "✓";
+    const small = el.querySelector("small");
+    if (small) small.textContent = s;
+    else el.textContent = s;
   });
 }
 
@@ -1331,6 +1438,147 @@ async function maybeMarkRead() {
     });
     setUnread(currentChatId, false);
   } catch (_) {}
+}
+
+/* =========================
+   Scroll anchoring for prepend (prevents jumps)
+   ========================= */
+
+function getTopVisibleMessageAnchor() {
+  if (!msgs) return null;
+  const list = Array.from(msgs.querySelectorAll(".msg[data-message-id]"));
+  if (!list.length) return null;
+
+  const containerTop = msgs.getBoundingClientRect().top;
+  for (const el of list) {
+    const r = el.getBoundingClientRect();
+    if (r.bottom > containerTop + 4) {
+      return { id: el.getAttribute("data-message-id"), top: r.top };
+    }
+  }
+  // fallback to first
+  const el = list[0];
+  return { id: el.getAttribute("data-message-id"), top: el.getBoundingClientRect().top };
+}
+
+function restoreAnchor(anchor) {
+  if (!msgs || !anchor?.id) return;
+  const el = msgs.querySelector(`.msg[data-message-id="${anchor.id}"]`);
+  if (!el) return;
+  const newTop = el.getBoundingClientRect().top;
+  const delta = newTop - anchor.top;
+  msgs.scrollTop += delta;
+}
+
+/* =========================
+   Open chat + load messages
+   ========================= */
+
+async function openChat(chatId, otherId, title) {
+  const cid = normChatId(chatId);
+  if (!cid) return;
+
+  saveDraftForCurrentChat();
+
+  // Unsubscribe previous chat presence (if backend supports it)
+  if (currentChatId && currentChatId !== cid) {
+    wsSend({ type: "presence:unsubscribe", chat_id: currentChatId });
+  }
+
+  currentChatId = cid;
+  currentOtherId = otherId;
+  nextBeforeId = null;
+  otherLastRead = 0;
+
+  // reset header presence/typing state
+  _otherOnline = false;
+  _isTyping = false;
+  setOnlineUI(false);
+  setTypingUI(false);
+
+  setUnread(cid, false);
+  restoreDraftForChat(cid);
+
+  const other = otherByChatId.get(cid) || { id: otherId, username: title, avatar_url: null, avatar_file_id: null };
+  setChatHeaderUser(other);
+
+  if (msgs) {
+    clearNode(msgs);
+    msgs.appendChild(mk("div", { class: "loading", text: "Loading…" }));
+  }
+
+  wsSend({ type: "presence:subscribe", chat_id: cid });
+
+  await loadMessagesPage();
+
+  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+  await maybeMarkRead();
+
+  if (msgs) {
+    msgs.onscroll = async () => {
+      if (msgs.scrollTop < 40 && nextBeforeId) {
+        const anchor = getTopVisibleMessageAnchor();
+        await loadMessagesPage(nextBeforeId, true);
+        // restore
+        requestAnimationFrame(() => restoreAnchor(anchor));
+      }
+      await maybeMarkRead();
+    };
+  }
+
+  showChatMobile();
+  startChatPoll();
+
+  updateSendVisibility();
+}
+
+async function loadMessagesPage(beforeId = null, prepend = false) {
+  if (!currentChatId) return;
+
+  const url = new URL(API + `/chats/dm/${currentChatId}/messages`, location.origin);
+  url.searchParams.set("limit", "50");
+  if (beforeId) url.searchParams.set("before_id", String(beforeId));
+
+  const r = await fetch(url.toString(), { headers: { Authorization: "Bearer " + token } });
+  if (!r.ok) return alert("Load messages failed: " + (await readError(r)));
+
+  const j = await r.json();
+  nextBeforeId = j.next_before_id;
+  otherLastRead = j.read_state?.other_last_read || otherLastRead;
+
+  const items = j.items || [];
+
+  if (!msgs) return;
+
+  if (!prepend) {
+    clearNode(msgs);
+  } else {
+    // remove old "loadmore" hint if exists (we'll re-add it)
+    const old = document.getElementById("loadmore");
+    if (old) old.remove();
+  }
+
+  if (nextBeforeId) {
+    const topHint = mk("div", { class: "loading", id: "loadmore", text: "Scroll up to load more…" });
+    if (prepend) msgs.insertAdjacentElement("afterbegin", topHint);
+    else msgs.appendChild(topHint);
+  }
+
+  if (prepend) {
+    // Insert new messages after loadmore
+    const lm = document.getElementById("loadmore");
+    const frag = document.createDocumentFragment();
+    for (const m of items) frag.appendChild(renderMessageNode(m));
+    if (lm && lm.parentNode === msgs) msgs.insertBefore(frag, lm.nextSibling);
+    else msgs.insertBefore(frag, msgs.firstChild);
+  } else {
+    const frag = document.createDocumentFragment();
+    for (const m of items) frag.appendChild(renderMessageNode(m));
+    msgs.appendChild(frag);
+  }
+
+  updateReadMarks();
+  applyGroupingAll();
 }
 
 /* =========================
@@ -1474,6 +1722,30 @@ async function sendMessage() {
 }
 
 /* =========================
+   Typing sender (debounced)
+   ========================= */
+
+let _typingStartSentAt = 0;
+let _typingStopTimer = null;
+
+function sendTypingStartDebounced() {
+  if (!ws || ws.readyState !== 1 || !currentChatId) return;
+  if (!isDialogVisible(currentChatId)) return;
+
+  const now = Date.now();
+  // send start at most once per 1200ms
+  if (now - _typingStartSentAt > 1200) {
+    wsSend({ type: "typing:start", chat_id: currentChatId });
+    _typingStartSentAt = now;
+  }
+
+  if (_typingStopTimer) clearTimeout(_typingStopTimer);
+  _typingStopTimer = setTimeout(() => {
+    wsSend({ type: "typing:stop", chat_id: currentChatId });
+  }, 1100);
+}
+
+/* =========================
    Wire buttons + inputs
    ========================= */
 
@@ -1504,7 +1776,6 @@ function bindUI() {
     });
   }
 
-  // cancel upload or remove file
   sfRemove && sfRemove.addEventListener("click", () => {
     if (currentUploadXhr) {
       try { currentUploadXhr.abort(); } catch (_) {}
@@ -1523,15 +1794,7 @@ function bindUI() {
     text.addEventListener("input", () => {
       saveDraftForCurrentChat();
       updateSendVisibility();
-
-      if (!ws || ws.readyState !== 1 || !currentChatId) return;
-      if (!isDialogVisible(currentChatId)) return;
-
-      wsSend({ type: "typing:start", chat_id: currentChatId });
-      clearTimeout(typingTimer);
-      typingTimer = setTimeout(() => {
-        wsSend({ type: "typing:stop", chat_id: currentChatId });
-      }, 900);
+      sendTypingStartDebounced();
     });
 
     text.addEventListener("keydown", (e) => {
@@ -1591,6 +1854,3 @@ function bindUI() {
   setViewportVars();
   updateSendVisibility();
 })();
-
-window.startDM = startDM;
-window.openChat = openChat;
