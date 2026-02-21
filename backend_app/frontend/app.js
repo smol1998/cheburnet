@@ -92,12 +92,87 @@ const btnBack = document.getElementById("btnBack");
 const pageChats = document.getElementById("pageChats");
 const chatsLayout = document.getElementById("chatsLayout");
 
+// chat panel for focus animation
+const chatPanel = document.getElementById("chatPanel");
+
 // ✅ Selected file visual (HTML уже есть)
 const selectedFile = document.getElementById("selectedFile");
 const sfIcon = document.getElementById("sfIcon");
 const sfName = document.getElementById("sfName");
 const sfSub = document.getElementById("sfSub");
 const sfRemove = document.getElementById("sfRemove");
+
+/* =========================
+   ✅ Viewport stability (no layout breaking on focus/keyboard)
+   ========================= */
+
+let _isTextFocused = false;
+
+function _clamp(n, a, b) {
+  return Math.max(a, Math.min(b, n));
+}
+
+function setViewportVars() {
+  // visualViewport gives stable "real" visible height on mobile
+  const vv = window.visualViewport;
+
+  const vhPx = vv ? vv.height : window.innerHeight;
+  // set --appVh = 1% of viewport height
+  document.documentElement.style.setProperty("--appVh", `${vhPx * 0.01}px`);
+
+  // keyboard-ish height (best effort)
+  let kb = 0;
+  if (vv) {
+    const layoutH = window.innerHeight;
+    kb = Math.max(0, layoutH - vv.height - (vv.offsetTop || 0));
+  }
+  document.documentElement.style.setProperty("--kb", `${kb}px`);
+
+  // small lift: on mobile depends on keyboard, but clamped; on desktop fixed small
+  const isMobile = window.matchMedia && window.matchMedia("(max-width:980px)").matches;
+
+  let lift = 0;
+  if (_isTextFocused) {
+    if (isMobile) {
+      // keyboard can be big; we lift only a small pleasant amount
+      // min 10px, max 26px
+      lift = _clamp(kb * 0.12, 10, 26);
+      // if kb==0 (android quirks), still lift a bit
+      if (kb < 8) lift = 12;
+    } else {
+      lift = 12; // desktop: subtle
+    }
+  } else {
+    lift = 0;
+  }
+  document.documentElement.style.setProperty("--lift", `${lift}px`);
+}
+
+function applyComposerFocusUI(on) {
+  if (!chatPanel) return;
+  chatPanel.classList.toggle("kbdFocus", !!on);
+}
+
+/* bind viewport events */
+(function bindViewportEvents() {
+  // initial
+  setViewportVars();
+
+  const vv = window.visualViewport;
+  if (vv) {
+    vv.addEventListener("resize", () => {
+      // schedule to next frame to avoid layout thrash
+      requestAnimationFrame(setViewportVars);
+    });
+    vv.addEventListener("scroll", () => {
+      requestAnimationFrame(setViewportVars);
+    });
+  }
+
+  window.addEventListener("resize", () => {
+    requestAnimationFrame(setViewportVars);
+  });
+})();
 
 /* =========================
    Helpers
@@ -243,7 +318,6 @@ function showSelectedFileUI(f) {
   sfName.textContent = f.name || "file";
   sfSub.textContent = `${fmtBytes(f.size)} • ${f.type || "file"}`;
 
-  // preview/icon
   sfIcon.textContent = "📎";
   revokeSelectedFileObjectUrl();
 
@@ -251,7 +325,6 @@ function showSelectedFileUI(f) {
     selectedFileObjectUrl = URL.createObjectURL(f);
     sfIcon.innerHTML = `<img src="${selectedFileObjectUrl}" alt="preview">`;
   } else if (f.type && f.type.startsWith("video/")) {
-    // Лёгкий визуал (без тяжёлого thumbnail)
     sfIcon.textContent = "🎥";
   } else {
     sfIcon.textContent = "📎";
@@ -377,10 +450,8 @@ function setUnread(chatId, val) {
   unreadByChatId.set(cid, !!val);
   savePersistedUnread();
 
-  // если диалог уже есть в DOM — просто рисуем бейдж
   paintUnreadBadge(cid, !!val);
 
-  // если диалога нет в DOM — грузим список, чтобы он появился
   if (!!val && !hasDialogRowInDOM(cid)) {
     scheduleDialogsReload("unread:missing_dialog_row");
   }
@@ -533,7 +604,6 @@ function logout() {
   setAccountMode(false);
   renderMiniMePill();
 
-  // на выходе чистим выбранный файл/превью
   clearSelectedFileUI();
 
   if (window.ui && typeof window.ui.setTab === "function") window.ui.setTab("account");
@@ -613,19 +683,15 @@ function connectWS() {
 
       const senderId = msg?.sender_id;
 
-      // если диалог реально открыт и видим — рендерим, читаем
       if (isDialogVisible(cid)) {
         if (msg?.id && !document.querySelector(`.msg[data-message-id="${msg.id}"]`)) {
           renderMessage(msg);
         }
         maybeMarkRead();
       } else {
-        // ✅ если это не наше сообщение — показываем NEW
         if (!(me && senderId && senderId === me.id)) {
           setUnread(cid, true);
         }
-
-        // ✅ если это новый чат (его нет в списке) — подгружаем диалоги
         if (!hasDialogRowInDOM(cid)) {
           scheduleDialogsReload("ws:new_message_unknown_dialog");
         }
@@ -831,7 +897,6 @@ async function loadDialogs() {
     })
     .join("");
 
-  // после перерендера — дорисовать все актуальные NEW (на всякий)
   for (const [cid, v] of unreadByChatId.entries()) {
     paintUnreadBadge(cid, v === true);
   }
@@ -1123,7 +1188,6 @@ async function uploadSelectedFile() {
     xhr.send(form);
   }).finally(() => {
     hideUpload();
-    // ✅ ВАЖНО: file.value НЕ чистим тут, чтобы превью не пропадало до успешной отправки
   });
 }
 
@@ -1220,7 +1284,6 @@ btnSend && (btnSend.onclick = () => sendMessage());
 btnLogout && (btnLogout.onclick = logout);
 btnSaveProfile && (btnSaveProfile.onclick = saveProfile);
 
-// ✅ preview выбранного файла в чате
 if (file) {
   file.addEventListener("change", () => {
     const f = file.files && file.files[0];
@@ -1258,15 +1321,23 @@ if (text) {
     }
   });
 
-  // ✅ FIX: убрали scrollIntoView, который ломал layout.
-  // Теперь максимум — если пользователь был у низа чата, держим его у низа.
+  // ✅ стабильный фокус: без scrollIntoView (ломает layout)
   text.addEventListener("focus", () => {
-    try {
-      const wasNearBottom = msgs ? isNearBottom() : false;
-      requestAnimationFrame(() => {
-        if (msgs && wasNearBottom) msgs.scrollTop = msgs.scrollHeight;
-      });
-    } catch (_) {}
+    _isTextFocused = true;
+    applyComposerFocusUI(true);
+    requestAnimationFrame(() => {
+      setViewportVars();
+      // keep chat at bottom only if user was already near bottom
+      try {
+        if (msgs && isNearBottom()) msgs.scrollTop = msgs.scrollHeight;
+      } catch (_) {}
+    });
+  });
+
+  text.addEventListener("blur", () => {
+    _isTextFocused = false;
+    applyComposerFocusUI(false);
+    requestAnimationFrame(setViewportVars);
   });
 }
 
@@ -1298,6 +1369,9 @@ btnBack &&
   } else {
     paintProfile();
   }
+
+  // final viewport vars sync
+  setViewportVars();
 })();
 
 window.startDM = startDM;
