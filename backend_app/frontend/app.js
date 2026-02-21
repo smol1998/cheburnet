@@ -92,87 +92,12 @@ const btnBack = document.getElementById("btnBack");
 const pageChats = document.getElementById("pageChats");
 const chatsLayout = document.getElementById("chatsLayout");
 
-// chat panel for focus animation
-const chatPanel = document.getElementById("chatPanel");
-
-// ✅ Selected file visual (HTML уже есть)
+// ✅ Selected file visual
 const selectedFile = document.getElementById("selectedFile");
 const sfIcon = document.getElementById("sfIcon");
 const sfName = document.getElementById("sfName");
 const sfSub = document.getElementById("sfSub");
 const sfRemove = document.getElementById("sfRemove");
-
-/* =========================
-   ✅ Viewport stability (no layout breaking on focus/keyboard)
-   ========================= */
-
-let _isTextFocused = false;
-
-function _clamp(n, a, b) {
-  return Math.max(a, Math.min(b, n));
-}
-
-function setViewportVars() {
-  // visualViewport gives stable "real" visible height on mobile
-  const vv = window.visualViewport;
-
-  const vhPx = vv ? vv.height : window.innerHeight;
-  // set --appVh = 1% of viewport height
-  document.documentElement.style.setProperty("--appVh", `${vhPx * 0.01}px`);
-
-  // keyboard-ish height (best effort)
-  let kb = 0;
-  if (vv) {
-    const layoutH = window.innerHeight;
-    kb = Math.max(0, layoutH - vv.height - (vv.offsetTop || 0));
-  }
-  document.documentElement.style.setProperty("--kb", `${kb}px`);
-
-  // small lift: on mobile depends on keyboard, but clamped; on desktop fixed small
-  const isMobile = window.matchMedia && window.matchMedia("(max-width:980px)").matches;
-
-  let lift = 0;
-  if (_isTextFocused) {
-    if (isMobile) {
-      // keyboard can be big; we lift only a small pleasant amount
-      // min 10px, max 26px
-      lift = _clamp(kb * 0.12, 10, 26);
-      // if kb==0 (android quirks), still lift a bit
-      if (kb < 8) lift = 12;
-    } else {
-      lift = 12; // desktop: subtle
-    }
-  } else {
-    lift = 0;
-  }
-  document.documentElement.style.setProperty("--lift", `${lift}px`);
-}
-
-function applyComposerFocusUI(on) {
-  if (!chatPanel) return;
-  chatPanel.classList.toggle("kbdFocus", !!on);
-}
-
-/* bind viewport events */
-(function bindViewportEvents() {
-  // initial
-  setViewportVars();
-
-  const vv = window.visualViewport;
-  if (vv) {
-    vv.addEventListener("resize", () => {
-      // schedule to next frame to avoid layout thrash
-      requestAnimationFrame(setViewportVars);
-    });
-    vv.addEventListener("scroll", () => {
-      requestAnimationFrame(setViewportVars);
-    });
-  }
-
-  window.addEventListener("resize", () => {
-    requestAnimationFrame(setViewportVars);
-  });
-})();
 
 /* =========================
    Helpers
@@ -235,7 +160,7 @@ function ensureAvatarPath(uobj) {
 }
 
 /* =========================
-   ✅ VISIBILITY FIX (важно!)
+   ✅ VISIBILITY FIX
    ========================= */
 
 function isChatsTabActive() {
@@ -280,6 +205,26 @@ function scheduleDialogsReload(reason = "") {
 }
 
 /* =========================
+   ✅ Telegram-like Send visibility
+   ========================= */
+
+function hasComposerContent() {
+  const t = (text && text.value ? text.value.trim() : "");
+  const hasText = !!t;
+  const hasFile = !!(file && file.files && file.files[0]);
+  return hasText || hasFile;
+}
+
+function updateSendVisibility() {
+  if (!btnSend) return;
+  const show = hasComposerContent();
+  btnSend.classList.toggle("isHidden", !show);
+
+  // если идёт отправка — кнопка может быть видимой, но disabled
+  // disabled ставится через disableSend()
+}
+
+/* =========================
    ✅ Selected file preview
    ========================= */
 
@@ -309,6 +254,8 @@ function clearSelectedFileUI({ keepInput = false } = {}) {
   if (sfIcon) sfIcon.textContent = "📎";
   if (sfName) sfName.textContent = "file";
   if (sfSub) sfSub.textContent = "—";
+
+  updateSendVisibility();
 }
 
 function showSelectedFileUI(f) {
@@ -331,6 +278,7 @@ function showSelectedFileUI(f) {
   }
 
   selectedFile.style.display = "flex";
+  updateSendVisibility();
 }
 
 /* =========================
@@ -379,7 +327,7 @@ function getLastRenderedMessageId() {
 function disableSend(disabled) {
   if (!btnSend) return;
   btnSend.disabled = !!disabled;
-  btnSend.style.opacity = disabled ? "0.7" : "1";
+  btnSend.style.opacity = disabled ? "0.7" : "";
 }
 
 /* =========================
@@ -482,6 +430,7 @@ function saveDraftForCurrentChat() {
   if (!text || !currentChatId) return;
   draftsByChatId.set(currentChatId, text.value || "");
   savePersistedDrafts();
+  updateSendVisibility();
 }
 
 function restoreDraftForChat(chatId) {
@@ -490,6 +439,7 @@ function restoreDraftForChat(chatId) {
   if (!cid) return;
   const v = draftsByChatId.get(cid) || "";
   text.value = v;
+  updateSendVisibility();
 }
 
 /* =========================
@@ -954,6 +904,8 @@ async function openChat(chatId, otherId, title) {
 
   if (window.ui && typeof window.ui.showChatMobile === "function") window.ui.showChatMobile();
   startChatPoll();
+
+  updateSendVisibility();
 }
 
 async function loadMessagesPage(beforeId = null, prepend = false) {
@@ -1269,6 +1221,7 @@ async function sendMessage() {
   setUnread(currentChatId, false);
 
   clearSelectedFileUI();
+  updateSendVisibility();
 }
 
 /* =========================
@@ -1284,14 +1237,17 @@ btnSend && (btnSend.onclick = () => sendMessage());
 btnLogout && (btnLogout.onclick = logout);
 btnSaveProfile && (btnSaveProfile.onclick = saveProfile);
 
+// ✅ preview выбранного файла в чате
 if (file) {
   file.addEventListener("change", () => {
     const f = file.files && file.files[0];
     showSelectedFileUI(f || null);
+    updateSendVisibility();
   });
 }
 sfRemove && sfRemove.addEventListener("click", () => {
   clearSelectedFileUI();
+  updateSendVisibility();
 });
 
 if (text) {
@@ -1303,6 +1259,8 @@ if (text) {
 
   text.addEventListener("input", () => {
     saveDraftForCurrentChat();
+    updateSendVisibility();
+
     if (!ws || ws.readyState !== 1 || !currentChatId) return;
     if (!isDialogVisible(currentChatId)) return;
 
@@ -1319,25 +1277,6 @@ if (text) {
       e.preventDefault();
       sendMessage();
     }
-  });
-
-  // ✅ стабильный фокус: без scrollIntoView (ломает layout)
-  text.addEventListener("focus", () => {
-    _isTextFocused = true;
-    applyComposerFocusUI(true);
-    requestAnimationFrame(() => {
-      setViewportVars();
-      // keep chat at bottom only if user was already near bottom
-      try {
-        if (msgs && isNearBottom()) msgs.scrollTop = msgs.scrollHeight;
-      } catch (_) {}
-    });
-  });
-
-  text.addEventListener("blur", () => {
-    _isTextFocused = false;
-    applyComposerFocusUI(false);
-    requestAnimationFrame(setViewportVars);
   });
 }
 
@@ -1370,8 +1309,7 @@ btnBack &&
     paintProfile();
   }
 
-  // final viewport vars sync
-  setViewportVars();
+  updateSendVisibility();
 })();
 
 window.startDM = startDM;

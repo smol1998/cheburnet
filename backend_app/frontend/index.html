@@ -52,10 +52,8 @@
       /* readability */
       --panelDim: rgba(0,0,0,.35);
 
-      /* ✅ viewport stability vars */
-      --appVh: 1vh;     /* set by JS via visualViewport */
-      --kb: 0px;        /* keyboard height-ish */
-      --lift: 0px;      /* small UI lift when focusing input */
+      /* stable viewport height helper */
+      --appVh: 1vh;
     }
 
     *{box-sizing:border-box}
@@ -116,7 +114,9 @@
       max-width:1320px;
       margin:0 auto;
 
-      /* ✅ stable height: JS sets --appVh using visualViewport */
+      height:100vh;
+      height:100svh;
+      height:100dvh;
       height: calc(var(--appVh) * 100);
 
       padding-top:    calc(14px + var(--sat));
@@ -404,6 +404,9 @@
       line-height:1;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
     }
     .btn:hover{ background:rgba(209,254,23,.24); }
     .btn.secondary{
@@ -609,10 +612,6 @@
       gap:10px;
       position:relative;
       z-index:3;
-
-      /* ✅ prevent scroll chaining when keyboard opens */
-      overscroll-behavior: contain;
-      scroll-behavior: auto;
     }
     .loading{
       align-self:center;
@@ -667,33 +666,25 @@
       -webkit-backdrop-filter: blur(18px);
       position:relative;
       z-index:3;
-
-      /* ✅ prevent weird flex jumps */
-      flex: 0 0 auto;
-
-      /* ✅ smooth lift animation */
-      transition: transform .24s ease, box-shadow .24s ease, border-color .24s ease;
-      will-change: transform;
     }
 
     .composerLeft{
       display:grid;
-      grid-template-columns: 1fr 120px;
+      grid-template-columns: 1fr;
       gap:10px;
       align-items:center;
       min-width:0;
     }
 
-    /* ✅ Focus lift: stable + small (like mobile) */
-    .chat.kbdFocus .composer{
-      transform: translateY(calc(-1 * var(--lift)));
-      box-shadow: 0 22px 60px rgba(0,0,0,.55);
-      border-top-color: rgba(209,254,23,.22);
-    }
-    .chat.kbdFocus .messages{
-      padding-bottom: calc(14px + var(--lift));
+    .composerRight{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      justify-content:flex-end;
+      flex:0 0 auto;
     }
 
+    /* Selected file visual */
     .selectedFile{
       grid-column:1 / -1;
       display:flex;
@@ -821,6 +812,42 @@
       color:var(--accent);
     }
 
+    /* ==== Telegram-like buttons ==== */
+    .fileBtn.compact{
+      height:38px;
+      padding:0 10px;
+      border-radius:12px;
+      min-width: 86px;
+    }
+
+    .sendIconBtn{
+      height:38px;
+      width:38px;
+      border-radius:12px;
+      border:1px solid rgba(209,254,23,.55);
+      background:rgba(209,254,23,.20);
+      color:var(--accent);
+      cursor:pointer;
+      font-weight:900;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      line-height:1;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .sendIconBtn:hover{ background:rgba(209,254,23,.28); }
+    .sendIconBtn:active{ transform:translateY(1px); }
+    .sendIconBtn[disabled]{ opacity:.6; cursor:not-allowed; }
+
+    /* скрытие без дерганья верстки */
+    .sendIconBtn.isHidden{
+      opacity:0;
+      pointer-events:none;
+      transform: scale(.92);
+    }
+
     @media (max-width:980px){
       body{ overflow:auto; }
       .shell{
@@ -841,15 +868,20 @@
 
       .backBtn{ display:inline-flex; align-items:center; justify-content:center; }
       .chatTitle{ max-width: 52vw; }
-      .composerLeft{ grid-template-columns:1fr 110px; }
       .msg{ max-width:92%; }
+
+      /* mobile fullscreen mode */
+      body.chat-full .topbar{ display:none; }
+      body.chat-full .shell{ padding:0; }
+      body.chat-full .chat{
+        inset: 0;
+        border-radius: 0;
+      }
     }
     @media (max-width:520px){
       .row2{ grid-template-columns:1fr; }
       .actions{ grid-template-columns:1fr; }
       .searchRow{ grid-template-columns:1fr 92px; }
-      .composer{ grid-template-columns:1fr; }
-      .composerLeft{ grid-template-columns:1fr 110px; }
     }
   </style>
 </head>
@@ -937,6 +969,7 @@
 
           <div class="composer">
 
+            <!-- selected file preview -->
             <div class="selectedFile" id="selectedFile" style="display:none">
               <div class="sfLeft">
                 <div class="sfIcon" id="sfIcon">📎</div>
@@ -960,12 +993,17 @@
 
             <div class="composerLeft">
               <input id="text" class="input" placeholder="Сообщение…" />
-              <label class="fileBtn">
+            </div>
+
+            <div class="composerRight">
+              <label class="fileBtn compact">
                 📎 File
                 <input id="file" type="file" />
               </label>
+
+              <button class="sendIconBtn isHidden" id="btnSend" type="button" aria-label="Send">➤</button>
             </div>
-            <button class="btn" id="btnSend" type="button">Send</button>
+
           </div>
         </main>
 
@@ -985,7 +1023,7 @@
           </div>
 
           <div class="cardBody">
-
+            <!-- Твоя текущая account-часть остаётся как есть -->
             <div id="authBox">
               <div class="row2">
                 <input id="u" class="input" placeholder="username" />
@@ -1051,7 +1089,6 @@
                 Изменения сохраняются в профиле: год рождения и аватарка.
               </div>
             </div>
-
           </div>
         </section>
 
@@ -1059,6 +1096,22 @@
     </section>
 
   </div>
+
+  <script>
+    // Stable viewport height (prevents jumps on mobile keyboard)
+    (function(){
+      const setVh = () => {
+        const h = (window.visualViewport && window.visualViewport.height) ? window.visualViewport.height : window.innerHeight;
+        document.documentElement.style.setProperty('--appVh', (h * 0.01) + 'px');
+      };
+      setVh();
+      window.addEventListener('resize', setVh);
+      if (window.visualViewport){
+        window.visualViewport.addEventListener('resize', setVh);
+        window.visualViewport.addEventListener('scroll', setVh);
+      }
+    })();
+  </script>
 
   <script>
     (() => {
@@ -1082,14 +1135,21 @@
         pageAccount.classList.toggle('active', !isChats);
 
         if (!isChats) chatsLayout.classList.remove('chats-open-chat');
+        if (!isChats) document.body.classList.remove('chat-full');
       }
 
-      function showChatMobile(){ chatsLayout.classList.add('chats-open-chat'); }
-      function showListMobile(){ chatsLayout.classList.remove('chats-open-chat'); }
+      function showChatMobile(){
+        chatsLayout.classList.add('chats-open-chat');
+        document.body.classList.add('chat-full');
+      }
+      function showListMobile(){
+        chatsLayout.classList.remove('chats-open-chat');
+        document.body.classList.remove('chat-full');
+      }
 
       tabChats.addEventListener('click', ()=>setTab('chats'));
       tabAccount.addEventListener('click', ()=>setTab('account'));
-      btnBack && btnBack.addEventListener('click', showListMobile);
+      btnBack.addEventListener('click', showListMobile);
 
       window.ui = { setTab, showChatMobile, showListMobile };
 
@@ -1114,7 +1174,7 @@
 
       const avatar = document.getElementById('avatar');
       const preview = document.getElementById('avatarPreview');
-      avatar && avatar.addEventListener('change', () => {
+      avatar.addEventListener('change', () => {
         const f = avatar.files && avatar.files[0];
         if (!f) { preview.innerHTML = '👤'; return; }
         const url = URL.createObjectURL(f);
@@ -1123,7 +1183,7 @@
 
       const av2 = document.getElementById('profileAvatarInput');
       const prev2 = document.getElementById('profileAvatar');
-      av2 && av2.addEventListener('change', () => {
+      av2.addEventListener('change', () => {
         const f = av2.files && av2.files[0];
         if (!f) return;
         const url = URL.createObjectURL(f);
