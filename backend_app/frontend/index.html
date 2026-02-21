@@ -607,14 +607,16 @@
       flex-direction:column;
       min-height:0;
     }
+
+    /* ✅ FIXED CHAT HEADER (ровно и стильно) */
     .chatHeader{
-      padding:12px 14px;
+      padding:10px 12px;
       display:flex;
       align-items:center;
       justify-content:space-between;
-      gap:10px;
+      gap:12px;
       border-bottom:1px solid rgba(255,255,255,.10);
-      min-height:58px;
+      min-height:64px;
       background:rgba(255,255,255,.02);
       backdrop-filter: blur(18px);
       -webkit-backdrop-filter: blur(18px);
@@ -626,11 +628,13 @@
       align-items:center;
       gap:10px;
       min-width:0;
+      flex:1 1 auto;
     }
     .backBtn{
       display:none;
-      height:38px;
-      padding:0 12px;
+      height:40px;
+      width:40px;
+      padding:0;
       border-radius:12px;
       border:1px solid rgba(255,255,255,.12);
       background:rgba(255,255,255,.05);
@@ -640,22 +644,69 @@
       flex:0 0 auto;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
+      transition: transform .16s ease, background .16s ease, border-color .16s ease;
     }
-    .chatTitle{ font-size:14px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:52vw; }
-    .typingText{ font-size:12px; color:var(--muted); min-height:16px; }
+    .backBtn:hover{ background:rgba(255,255,255,.07); border-color:rgba(209,254,23,.20); }
+    .backBtn:active{ transform: translateY(1px); }
+
+    .chatAvatar{
+      width:36px;
+      height:36px;
+      border-radius:999px;
+      overflow:hidden;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.06);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      flex:0 0 auto;
+    }
+    .chatAvatar img{ width:100%; height:100%; object-fit:cover; display:block; }
+    .chatTitleWrap{
+      min-width:0;
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      line-height:1.12;
+      gap:4px;
+    }
+    .chatTitle{
+      font-size:14px;
+      font-weight:900;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      max-width: 58vw;
+      letter-spacing:.2px;
+    }
+    .typingText{
+      font-size:12px;
+      color:var(--muted);
+      min-height:14px;
+      line-height:1;
+    }
 
     .chatMeta{
       display:flex;
       align-items:center;
-      gap:10px;
+      gap:8px;
       color:var(--muted);
       font-size:12px;
       flex:0 0 auto;
       position:relative;
       z-index:3;
+      white-space:nowrap;
+      line-height:1;
     }
-    .dot{ width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,.18); }
+    .dot{
+      width:8px;
+      height:8px;
+      border-radius:50%;
+      background:rgba(255,255,255,.18);
+      flex:0 0 auto;
+    }
     .dot.online{ background:var(--accent); box-shadow:0 0 0 3px rgba(209,254,23,.16); }
+    .onlineText{ position:relative; top:0; }
 
     .messages{
       flex:1;
@@ -710,11 +761,12 @@
       border:1px solid rgba(255,255,255,.10);
     }
 
+    /* ✅ Composer (Telegram-like): input + attach + send (in one row) */
     .composer{
-      padding:12px;
+      padding:10px 12px;
       border-top:1px solid rgba(255,255,255,.10);
       display:grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: 1fr auto auto;
       gap:10px;
       align-items:center;
       background:rgba(255,255,255,.02);
@@ -737,18 +789,7 @@
     }
 
     .composerLeft{
-      display:grid;
-      grid-template-columns: 1fr;
-      gap:10px;
-      align-items:center;
       min-width:0;
-    }
-    .composerRight{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      justify-content:flex-end;
-      flex:0 0 auto;
     }
 
     /* Selected file (единственный вариант UI) */
@@ -816,7 +857,7 @@
       max-width: 52vw;
     }
 
-    /* ✅ progress around X button (not a circle; follow button shape) */
+    /* progress around X button */
     .sfRemove{
       --p: 0; /* 0..100 */
       position:relative;
@@ -837,14 +878,12 @@
       transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease, color .18s ease;
       isolation:isolate;
     }
-
-    /* ring-like border by masking the center */
     .sfRemove::before{
       content:"";
       position:absolute;
       inset:-2px;
       border-radius:14px;
-      padding:2px; /* border thickness */
+      padding:2px;
       background:
         conic-gradient(
           var(--accent) calc(var(--p) * 1%),
@@ -918,16 +957,33 @@
       color:var(--accent);
     }
 
-    /* send button */
-    .fileBtn.compact{
-      height:38px;
-      padding:0 10px;
+    /* ✅ Small attach button (icon-only) */
+    .attachBtn{
+      height:40px;
+      width:40px;
       border-radius:12px;
-      min-width: 86px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.05);
+      color:rgba(255,255,255,.85);
+      cursor:pointer;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      line-height:1;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: transform .16s ease, background .16s ease, border-color .16s ease, opacity .16s ease;
+      position:relative;
+      overflow:hidden;
     }
+    .attachBtn:hover{ background:rgba(255,255,255,.07); border-color:rgba(209,254,23,.18); }
+    .attachBtn:active{ transform: translateY(1px); }
+    .attachBtn input[type="file"]{ position:absolute; inset:0; opacity:0; cursor:pointer; }
+
+    /* ✅ Send button appears smoothly (Telegram-like) */
     .sendIconBtn{
-      height:38px;
-      width:38px;
+      height:40px;
+      width:40px;
       border-radius:12px;
       border:1px solid rgba(209,254,23,.55);
       background:rgba(209,254,23,.20);
@@ -940,7 +996,12 @@
       line-height:1;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      transition: opacity .18s ease, transform .18s ease;
+
+      transition:
+        opacity .18s ease,
+        transform .18s ease,
+        filter .18s ease;
+      will-change: opacity, transform;
     }
     .sendIconBtn:hover{ background:rgba(209,254,23,.28); }
     .sendIconBtn:active{ transform:translateY(1px); }
@@ -948,7 +1009,8 @@
     .sendIconBtn.isHidden{
       opacity:0;
       pointer-events:none;
-      transform: scale(.92);
+      transform: translateY(2px) scale(.92);
+      filter: blur(.2px);
     }
 
     @media (max-width:980px){
@@ -987,8 +1049,7 @@
 
       .authRow2{ grid-template-columns: 1fr; }
 
-      .composer{ grid-template-columns:1fr; }
-      .composerRight{ justify-content:space-between; }
+      /* composer stays 1 row; just tighten paddings via existing vars */
     }
   </style>
 </head>
@@ -1056,17 +1117,22 @@
           <div class="liquidLayer"></div>
           <div class="hoverSweep"></div>
 
+          <!-- ✅ New header layout -->
           <div class="chatHeader">
             <div class="chatLeft">
-              <button class="backBtn" id="btnBack" type="button">←</button>
-              <div style="min-width:0">
+              <button class="backBtn" id="btnBack" type="button" aria-label="Back">←</button>
+
+              <div class="chatAvatar" id="chatAvatar" aria-hidden="true">👤</div>
+
+              <div class="chatTitleWrap">
                 <div class="chatTitle" id="chatTitle">Chat: —</div>
                 <div class="typingText" id="typingText"></div>
               </div>
             </div>
-            <div class="chatMeta">
+
+            <div class="chatMeta" aria-label="Presence">
               <span class="dot" id="onlineDot"></span>
-              <span id="onlineText">—</span>
+              <span class="onlineText" id="onlineText">—</span>
             </div>
           </div>
 
@@ -1095,13 +1161,14 @@
               <input id="text" class="input" placeholder="Сообщение…" />
             </div>
 
-            <div class="composerRight">
-              <label class="fileBtn compact">
-                📎 File
-                <input id="file" type="file" />
-              </label>
-              <button class="sendIconBtn isHidden" id="btnSend" type="button" aria-label="Send">➤</button>
-            </div>
+            <!-- ✅ Small attach button right of input -->
+            <label class="attachBtn" aria-label="Attach file" title="Attach">
+              📎
+              <input id="file" type="file" />
+            </label>
+
+            <!-- ✅ Send button further right -->
+            <button class="sendIconBtn isHidden" id="btnSend" type="button" aria-label="Send">➤</button>
           </div>
         </main>
 
@@ -1203,6 +1270,6 @@
 
   </div>
 
-  <script src="/static/app.js?v=4007"></script>
+  <script src="/static/app.js?v=4009"></script>
 </body>
 </html>

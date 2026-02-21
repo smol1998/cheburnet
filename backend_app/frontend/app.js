@@ -68,6 +68,7 @@ const btnLogout = document.getElementById("btnLogout");
 const mePill = document.getElementById("mePill");
 
 const chatTitle = document.getElementById("chatTitle");
+const chatAvatar = document.getElementById("chatAvatar");
 const msgs = document.getElementById("msgs");
 const dialogs = document.getElementById("dialogs");
 const searchRes = document.getElementById("searchRes");
@@ -449,14 +450,12 @@ function showSelectedFileUI(f) {
 
   const { label, icon } = typeLabelAndIcon(f);
 
-  // ✅ вместо длинного имени — короткий тип
   sfName.textContent = label;
 
   const e = extOf(f.name);
   const mimeShort = f.type ? f.type : (e ? `.${e}` : "file");
   sfSub.textContent = `${fmtBytes(f.size)} • ${mimeShort}`;
 
-  // полное имя только как подсказка
   selectedFile.title = f.name || "";
 
   sfIcon.textContent = icon;
@@ -1048,6 +1047,21 @@ async function loadDialogs() {
    Messages
    ========================= */
 
+function setChatHeaderUser(other) {
+  const username = other?.username ? String(other.username) : "—";
+
+  if (chatTitle) chatTitle.textContent = `@${username}`;
+
+  if (chatAvatar) {
+    const path = ensureAvatarPath(other);
+    const v = other && other.avatar_file_id ? other.avatar_file_id : Date.now();
+    const src = path ? fileUrl(path, v) : "";
+    chatAvatar.innerHTML = src
+      ? `<img src="${src}" alt="avatar" onerror="this.onerror=null;this.parentElement.innerHTML='👤'">`
+      : "👤";
+  }
+}
+
 async function openChat(chatId, otherId, title) {
   const cid = normChatId(chatId);
   if (!cid) return;
@@ -1063,15 +1077,8 @@ async function openChat(chatId, otherId, title) {
   restoreDraftForChat(cid);
 
   const other = otherByChatId.get(cid) || { id: otherId, username: title, avatar_url: null, avatar_file_id: null };
-  const username = other?.username || title || "—";
-  const av = renderAvatarSpan(other, 30);
 
-  if (chatTitle) {
-    chatTitle.innerHTML = `<span style="display:flex;align-items:center;gap:10px;min-width:0">
-      ${av}
-      <span style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">@${escapeHtml(username)}</span>
-    </span>`;
-  }
+  setChatHeaderUser(other);
 
   setTypingUI("");
   setOnlineUI(false);
