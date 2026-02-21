@@ -8,22 +8,27 @@
 
   <style>
     :root{
+      /* === Palette (сохранили) === */
       --bg:#000000;
       --accent:#D1FE17;
 
       --text:rgba(255,255,255,.94);
       --muted:rgba(255,255,255,.62);
 
-      --glass:  rgba(18,18,18,.38);
-      --glass2: rgba(12,12,12,.52);
+      /* === Glass hierarchy (разная яркость/плотность) === */
+      --glassTop:  rgba(22,22,22,.52);
+      --glassCard: rgba(18,18,18,.44);
+      --glassChat: rgba(14,14,14,.40);
 
-      --stroke2: rgba(255,255,255,.10);
-      --stroke:  rgba(209,254,23,.28);
+      --strokeSoft: rgba(255,255,255,.10);
+      --strokeHard: rgba(255,255,255,.14);
+      --strokeAccent: rgba(209,254,23,.22);
 
-      --shadow: 0 18px 55px rgba(0,0,0,.62);
-      --shadow2: 0 8px 28px rgba(0,0,0,.55);
+      --shadowTop:  0 18px 55px rgba(0,0,0,.55);
+      --shadowCard: 0 14px 44px rgba(0,0,0,.52);
+      --shadowChat: 0 10px 34px rgba(0,0,0,.48);
 
-      --radius:16px;
+      --radius:18px;
 
       --gap:12px;
       --pad:12px;
@@ -38,13 +43,24 @@
       --sab: env(safe-area-inset-bottom, 0px);
       --sal: env(safe-area-inset-left, 0px);
 
-      --glassBlur: 26px;
-      --glassSat:  170%;
-      --glassBright: 108%;
+      /* glass processing */
+      --glassBlurTop: 24px;
+      --glassBlurCard: 22px;
+      --glassBlurChat: 20px;
 
+      --glassSat:  160%;
+      --glassBright: 112%;
+
+      /* viewport vars from JS */
       --appVh: 1vh;
       --kb: 0px;
       --lift: 0px;
+
+      /* очень мягкий шум (фон уже canvas) */
+      --grainOpacity: .02;
+      --grainOpacityGlass: .038;
+
+      --noiseSoft: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='512' height='512'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.65' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='512' height='512' filter='url(%23n)' opacity='.28'/%3E%3C/svg%3E");
     }
 
     *{box-sizing:border-box}
@@ -60,33 +76,40 @@
       text-rendering: geometricPrecision;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
-    }
-
-    body::before{
-      content:"";
-      position:fixed;
-      inset:-30%;
-      background:
-        radial-gradient(1200px 900px at 14% 10%, rgba(209,254,23,.22), transparent 60%),
-        radial-gradient(1400px 1100px at 88% 18%, rgba(209,254,23,.16), transparent 62%),
-        radial-gradient(1100px 900px at 55% 110%, rgba(209,254,23,.12), transparent 65%),
-        radial-gradient(900px 700px at 55% 45%, rgba(255,255,255,.06), transparent 70%);
-      filter: blur(92px);
       transform: translateZ(0);
-      z-index:-3;
-      pointer-events:none;
     }
 
+    /* ===== Canvas background (no banding) ===== */
+    #bgfx{
+      position:fixed;
+      inset:0;
+      width:100%;
+      height:100%;
+      z-index:-4;
+      pointer-events:none;
+      transform: translateZ(0);
+    }
+
+    /* ===== Global super-soft grain (почти 0) ===== */
     body::after{
       content:"";
       position:fixed;
       inset:0;
       pointer-events:none;
       z-index:-2;
-      opacity:.16;
-      mix-blend-mode: overlay;
-      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)' opacity='.26'/%3E%3C/svg%3E");
-      background-size:240px 240px;
+      opacity: var(--grainOpacity);
+      mix-blend-mode: soft-light;
+      background-image: var(--noiseSoft);
+      background-size: 820px 820px;
+      filter: blur(.9px) contrast(110%) brightness(108%);
+      transform: translateZ(0);
+    }
+
+    @media (max-width:980px){
+      :root{
+        --grainOpacity: .026;
+        --grainOpacityGlass: .045;
+      }
     }
 
     .scroll{
@@ -118,127 +141,99 @@
       position:relative;
     }
 
+    /* мягкая “вуаль” вместо градиентной подложки */
     .shell::before{
       content:"";
       position:absolute;
       inset: 8px;
       border-radius: 26px;
-      background: radial-gradient(1200px 900px at 50% 40%, rgba(0,0,0,.15), rgba(0,0,0,.38) 60%, rgba(0,0,0,.48));
-      filter: blur(22px);
-      opacity:.85;
+      background: rgba(0,0,0,.26);
+      filter: blur(18px);
+      opacity:.75;
       pointer-events:none;
       z-index:-1;
     }
 
+    /* ===== NEW: clean glass base + hierarchy ===== */
     .glassBase{
-      background:
-        linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.02)),
-        var(--glass);
-      border:1px solid rgba(255,255,255,.12);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(var(--glassBlur)) saturate(var(--glassSat)) brightness(var(--glassBright));
-      -webkit-backdrop-filter: blur(var(--glassBlur)) saturate(var(--glassSat)) brightness(var(--glassBright));
+      border-radius: var(--radius);
+      border: 1px solid var(--strokeSoft);
       position:relative;
       overflow:hidden;
-      transform: translateZ(0);
       isolation:isolate;
+      transform: translateZ(0);
+      backdrop-filter: blur(22px) saturate(var(--glassSat)) brightness(var(--glassBright));
+      -webkit-backdrop-filter: blur(22px) saturate(var(--glassSat)) brightness(var(--glassBright));
     }
 
-    .glassBase .glassInnerDim{
-      position:absolute;
-      inset:0;
-      background: linear-gradient(180deg, rgba(0,0,0,.20), rgba(0,0,0,.36));
-      pointer-events:none;
-      z-index:0;
-    }
-
+    /* top highlight (iOS-like) */
     .glassBase::before{
       content:"";
       position:absolute;
-      inset:-2px;
-      background:
-        radial-gradient(820px 260px at 20% 0%, rgba(255,255,255,.16), transparent 62%),
-        radial-gradient(720px 260px at 82% 0%, rgba(209,254,23,.12), transparent 64%);
+      inset:0;
       pointer-events:none;
-      opacity:.85;
       z-index:1;
+      background:
+        radial-gradient(120% 60% at 50% 0%,
+          rgba(255,255,255,.10),
+          rgba(255,255,255,0) 55%);
+      opacity:.9;
     }
 
+    /* inner stroke */
     .glassBase::after{
       content:"";
       position:absolute;
       inset:0;
-      border-radius: inherit;
       pointer-events:none;
       z-index:2;
+      border-radius: inherit;
       box-shadow:
-        inset 0 1px 0 rgba(255,255,255,.16),
-        inset 0 -1px 0 rgba(0,0,0,.45),
-        inset 1px 0 0 rgba(255,255,255,.06),
-        inset -1px 0 0 rgba(255,255,255,.04);
+        inset 0 0 0 1px rgba(255,255,255,.04),
+        inset 0 -1px 0 rgba(0,0,0,.35);
     }
 
-    .liquid{ --shimmerOpacity: .18; }
-    .liquid .liquidLayer{
+    /* grain inside glass (очень мягкий) */
+    .glassBase .glassGrain{
+      content:"";
       position:absolute;
-      inset:-40%;
-      background:
-        conic-gradient(
-          from 210deg at 50% 50%,
-          rgba(209,254,23,.00) 0deg,
-          rgba(209,254,23,.10) 40deg,
-          rgba(255,255,255,.12) 85deg,
-          rgba(209,254,23,.06) 120deg,
-          rgba(255,255,255,.00) 180deg,
-          rgba(209,254,23,.08) 250deg,
-          rgba(255,255,255,.10) 300deg,
-          rgba(209,254,23,.00) 360deg
-        );
-      filter: blur(34px);
-      opacity: var(--shimmerOpacity);
-      mix-blend-mode: screen;
+      inset:0;
       pointer-events:none;
-      z-index:1;
+      z-index:0;
+      opacity: var(--grainOpacityGlass);
+      mix-blend-mode: soft-light;
+      background-image: var(--noiseSoft);
+      background-size: 720px 720px;
+      filter: blur(.45px) contrast(112%) brightness(108%);
       transform: translateZ(0);
-      animation: liquidFloat 10s ease-in-out infinite;
     }
 
-    .glassBase:hover .hoverSweep{
-      opacity:.34;
-      transform: translateX(0);
-    }
-    .hoverSweep{
-      position:absolute;
-      top:-30%;
-      left:-60%;
-      width:140%;
-      height:180%;
-      background:
-        linear-gradient(115deg,
-          rgba(255,255,255,0) 0%,
-          rgba(255,255,255,.09) 30%,
-          rgba(209,254,23,.11) 45%,
-          rgba(255,255,255,.08) 60%,
-          rgba(255,255,255,0) 78%);
-      filter: blur(18px);
-      opacity:0;
-      transform: translateX(-18%);
-      transition: opacity .28s ease, transform .55s ease;
-      pointer-events:none;
-      z-index:1;
-      mix-blend-mode: screen;
+    .glass--topbar{
+      background: var(--glassTop);
+      box-shadow: var(--shadowTop);
+      border-color: rgba(255,255,255,.12);
+      backdrop-filter: blur(var(--glassBlurTop)) saturate(var(--glassSat)) brightness(116%);
+      -webkit-backdrop-filter: blur(var(--glassBlurTop)) saturate(var(--glassSat)) brightness(116%);
     }
 
-    @keyframes liquidFloat{
-      0%   { transform: translate3d(-2%, -1%, 0) rotate(-2deg); }
-      50%  { transform: translate3d( 2%,  1%, 0) rotate( 2deg); }
-      100% { transform: translate3d(-2%, -1%, 0) rotate(-2deg); }
+    .glass--card{
+      background: var(--glassCard);
+      box-shadow: var(--shadowCard);
+      border-color: rgba(255,255,255,.11);
+      backdrop-filter: blur(var(--glassBlurCard)) saturate(var(--glassSat)) brightness(112%);
+      -webkit-backdrop-filter: blur(var(--glassBlurCard)) saturate(var(--glassSat)) brightness(112%);
     }
 
-    @media (prefers-reduced-motion: reduce){
-      .liquid .liquidLayer{ animation:none; }
-      .hoverSweep{ transition:none; }
+    .glass--chat{
+      background: var(--glassChat);
+      box-shadow: var(--shadowChat);
+      border-color: rgba(255,255,255,.10);
+      backdrop-filter: blur(var(--glassBlurChat)) saturate(var(--glassSat)) brightness(110%);
+      -webkit-backdrop-filter: blur(var(--glassBlurChat)) saturate(var(--glassSat)) brightness(110%);
     }
+
+    /* useful helper for active/highlight states */
+    .glassAccent{ border-color: var(--strokeAccent); }
 
     .topbar{
       border-radius:22px;
@@ -296,19 +291,19 @@
       cursor:pointer;
     }
     .tabBtn.active{
-      border-color:rgba(209,254,23,.55);
+      border-color:rgba(209,254,23,.46);
       color:#0b0b0b;
-      background:rgba(209,254,23,.94);
-      box-shadow: 0 10px 26px rgba(209,254,23,.12);
+      background:rgba(209,254,23,.92);
+      box-shadow: 0 10px 26px rgba(209,254,23,.10);
     }
 
     .mePill{
       font-size:12px;
       padding:6px 10px;
       border-radius:999px;
-      border:1px solid rgba(209,254,23,.30);
+      border:1px solid rgba(209,254,23,.26);
       color:var(--accent);
-      background:rgba(0,0,0,.22);
+      background:rgba(0,0,0,.18);
       max-width: 320px;
       overflow:hidden;
       text-overflow:ellipsis;
@@ -334,11 +329,11 @@
     .page.active{ display:flex; min-height:0; }
 
     .card{
-      border:1px solid rgba(255,255,255,.12);
       border-radius:var(--radius);
       overflow:hidden;
       position:relative;
     }
+
     .cardHeader{
       padding:12px 14px;
       border-bottom:1px solid rgba(255,255,255,.10);
@@ -349,6 +344,7 @@
       min-height:54px;
       position:relative;
       z-index:3;
+      background: rgba(255,255,255,.02);
     }
     .cardTitle{
       font-size:12px;
@@ -362,7 +358,7 @@
       width:100%;
       height:var(--inputH);
       border-radius:12px;
-      background:rgba(0,0,0,.26);
+      background:rgba(0,0,0,.18);
       border:1px solid rgba(255,255,255,.12);
       color:var(--text);
       padding:0 12px;
@@ -372,42 +368,47 @@
       -webkit-backdrop-filter: blur(12px);
     }
     .input:focus{
-      border-color:rgba(209,254,23,.55);
-      box-shadow:0 0 0 3px rgba(209,254,23,.16);
+      border-color:rgba(255,255,255,.18);
+      box-shadow:0 0 0 3px rgba(255,255,255,.06);
     }
 
     .btn{
       height:var(--btnH);
       border-radius:12px;
-      border:1px solid rgba(209,254,23,.55);
-      background:rgba(209,254,23,.18);
-      color:var(--accent);
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.06);
+      color: var(--text);
       padding:0 14px;
       cursor:pointer;
       font-weight:800;
       white-space:nowrap;
       line-height:1;
-
       display:inline-flex;
       align-items:center;
       justify-content:center;
       text-align:center;
-
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
+      transition: transform .12s ease, background .16s ease, border-color .16s ease;
     }
-    .btn:hover{ background:rgba(209,254,23,.24); }
+    .btn:hover{ background: rgba(255,255,255,.08); }
+    .btn:active{ transform:translateY(1px); }
+
     .btn.secondary{
-      border-color:rgba(255,255,255,.14);
-      color:var(--text);
-      background:rgba(255,255,255,.05);
+      background: rgba(0,0,0,.16);
+      border-color: rgba(255,255,255,.10);
+      color: rgba(255,255,255,.82);
+    }
+    .btn.accent{
+      border-color: rgba(209,254,23,.44);
+      background: rgba(209,254,23,.14);
+      color: var(--accent);
     }
     .btn.danger{
       border-color:rgba(255,90,90,.40);
       color:#ffb1b1;
       background:rgba(255,90,90,.10);
     }
-    .btn:active{ transform:translateY(1px); }
 
     .hint{ color:var(--muted); font-size:12px; line-height:1.4; }
     .row{ display:grid; gap:10px; }
@@ -482,7 +483,6 @@
       font-weight:900;
       cursor:pointer;
       transition: background .18s ease, border-color .18s ease, transform .18s ease, color .18s ease;
-
       display:flex;
       align-items:center;
       justify-content:center;
@@ -491,13 +491,13 @@
     }
     .authSwitchBtn:hover{
       background:rgba(255,255,255,.06);
-      border-color:rgba(209,254,23,.24);
+      border-color:rgba(255,255,255,.16);
     }
     .authSwitchBtn.active{
       background:rgba(209,254,23,.92);
-      border-color:rgba(209,254,23,.55);
+      border-color:rgba(209,254,23,.50);
       color:#0b0b0b;
-      box-shadow: 0 10px 24px rgba(209,254,23,.12);
+      box-shadow: 0 10px 24px rgba(209,254,23,.10);
     }
     .authRow2{
       display:grid;
@@ -579,17 +579,19 @@
       padding:10px 12px;
       border-radius:14px;
       border:1px solid rgba(255,255,255,.10);
-      background:rgba(255,255,255,.04);
+      background: rgba(255,255,255,.03);
       cursor:pointer;
       backdrop-filter: blur(14px);
       -webkit-backdrop-filter: blur(14px);
       position:relative;
       user-select:none;
+      transition: background .16s ease, border-color .16s ease, transform .12s ease;
     }
     .item:hover{
-      border-color:rgba(209,254,23,.28);
-      background:rgba(209,254,23,.06);
+      border-color: rgba(255,255,255,.16);
+      background: rgba(255,255,255,.05);
     }
+    .item:active{ transform: translateY(1px); }
     .item small{ color:var(--muted); }
 
     .searchRow{
@@ -634,9 +636,9 @@
       flex:0 0 auto;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      transition: transform .16s ease, background .16s ease, border-color .16s ease;
+      transition: transform .12s ease, background .16s ease, border-color .16s ease;
     }
-    .backBtn:hover{ background:rgba(255,255,255,.07); border-color:rgba(209,254,23,.20); }
+    .backBtn:hover{ background:rgba(255,255,255,.07); border-color:rgba(255,255,255,.18); }
     .backBtn:active{ transform: translateY(1px); }
 
     .chatAvatar{
@@ -692,9 +694,8 @@
       flex:0 0 auto;
       transition: transform .18s ease, opacity .18s ease, background .18s ease;
     }
-    .dot.online{ background:var(--accent); box-shadow:0 0 0 3px rgba(209,254,23,.16); }
+    .dot.online{ background:var(--accent); box-shadow:0 0 0 3px rgba(209,254,23,.14); }
     .dot.isHidden{ opacity:0; transform: scale(.85); }
-
     .onlineText{ white-space:nowrap; }
 
     .messages{
@@ -710,6 +711,7 @@
       overscroll-behavior: contain;
       scroll-behavior: auto;
     }
+
     .loading{
       align-self:center;
       color:var(--muted);
@@ -722,32 +724,69 @@
       -webkit-backdrop-filter: blur(12px);
     }
 
+    /* ===== NEW: iOS-like message bubbles ===== */
     .msg{
-      max-width:76%;
-      padding:10px 12px;
-      border-radius:14px;
-      border:1px solid rgba(255,255,255,.10);
-      background:rgba(255,255,255,.04);
-      line-height:1.35;
-      word-break:break-word;
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      box-shadow: var(--shadow2);
+      max-width:78%;
+      padding: 10px 12px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.045);
+      line-height: 1.35;
+      word-break: break-word;
+
+      /* iOS-ish geometry: softer + asymmetric corners */
+      border-radius: 18px 18px 18px 7px;
+
+      backdrop-filter: blur(16px) saturate(160%) brightness(112%);
+      -webkit-backdrop-filter: blur(16px) saturate(160%) brightness(112%);
+      box-shadow: 0 8px 22px rgba(0,0,0,.38);
+
+      font-size: 14px;
+      letter-spacing: .1px;
     }
+
     .msg.me{
       margin-left:auto;
-      border-color:rgba(209,254,23,.28);
-      background:rgba(209,254,23,.10);
-    }
-    .msg small{ color:var(--muted); display:block; margin-top:6px; font-size:11px; }
-    .readmark{ opacity:.9; }
+      border-color: rgba(209,254,23,.22);
+      background: rgba(209,254,23,.11);
 
+      /* зеркалим “tail corner” */
+      border-radius: 18px 18px 7px 18px;
+      box-shadow: 0 10px 24px rgba(0,0,0,.40);
+    }
+
+    .msgText{
+      white-space: pre-wrap;
+    }
+
+    /* мета чуть аккуратнее как в iOS */
+    .msgMeta{
+      margin-top: 6px;
+      opacity: .86;
+    }
+    .msgTime{
+      color: rgba(255,255,255,.62);
+      font-size: 11px;
+      letter-spacing: .15px;
+    }
+    .readmark{
+      opacity: .9;
+      color: rgba(255,255,255,.75);
+    }
+    .msg.me .readmark{
+      color: rgba(0,0,0,.55);
+      opacity: .85;
+    }
+    .msg.me .msgTime{
+      color: rgba(0,0,0,.55);
+    }
+
+    /* attachments inside bubbles */
     .attachment img,.attachment video{
       display:block;
       margin-top:8px;
       max-width:420px;
       width:100%;
-      border-radius:12px;
+      border-radius:14px;
       border:1px solid rgba(255,255,255,.10);
     }
     .attachment img{ height:auto; }
@@ -771,8 +810,8 @@
     }
     .chat.kbdFocus .composer{
       transform: translateY(calc(-1 * var(--lift)));
-      box-shadow: 0 22px 60px rgba(0,0,0,.55);
-      border-top-color: rgba(209,254,23,.22);
+      box-shadow: 0 22px 60px rgba(0,0,0,.50);
+      border-top-color: rgba(255,255,255,.14);
     }
     .chat.kbdFocus .messages{
       padding-bottom: calc(14px + var(--lift));
@@ -790,11 +829,9 @@
       padding:10px 12px;
       border-radius:14px;
       border:1px solid rgba(255,255,255,.12);
-      background:
-        linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.02)),
-        rgba(255,255,255,.04);
+      background: rgba(255,255,255,.05);
 
-      box-shadow: 0 16px 34px rgba(0,0,0,.45);
+      box-shadow: 0 16px 34px rgba(0,0,0,.42);
       backdrop-filter: blur(18px);
       -webkit-backdrop-filter: blur(18px);
       position:relative;
@@ -813,8 +850,8 @@
       display:flex;
       align-items:center;
       justify-content:center;
-      border:1px solid rgba(209,254,23,.30);
-      background:rgba(209,254,23,.12);
+      border:1px solid rgba(209,254,23,.26);
+      background:rgba(209,254,23,.10);
       flex:0 0 auto;
       font-size:18px;
       overflow:hidden;
@@ -844,6 +881,7 @@
       max-width: 52vw;
     }
 
+    /* твой progress-ring на X оставили как был */
     .sfRemove{
       --p: 0;
       position:relative;
@@ -887,14 +925,14 @@
     }
 
     .sfRemove.uploading{
-      border-color: rgba(209,254,23,.45);
+      border-color: rgba(209,254,23,.40);
       background: rgba(209,254,23,.10);
       animation: ringPulse 1.2s ease-in-out infinite;
       color: rgba(255,255,255,.92);
     }
     .sfRemove.uploading::before{
       opacity: 1;
-      filter: drop-shadow(0 0 8px rgba(209,254,23,0.22));
+      filter: drop-shadow(0 0 8px rgba(209,254,23,0.20));
     }
     .sfRemove:hover{
       border-color:rgba(255,90,90,.40);
@@ -902,7 +940,7 @@
       background:rgba(255,90,90,.10);
     }
     .sfRemove.uploading:hover{
-      border-color: rgba(209,254,23,.55);
+      border-color: rgba(209,254,23,.50);
       background: rgba(209,254,23,.12);
       color: rgba(255,255,255,.92);
     }
@@ -918,7 +956,7 @@
 
     @keyframes ringPulse {
       0%   { box-shadow: 0 0 0 rgba(209,254,23,0.00); }
-      50%  { box-shadow: 0 0 18px rgba(209,254,23,0.18); }
+      50%  { box-shadow: 0 0 18px rgba(209,254,23,0.16); }
       100% { box-shadow: 0 0 0 rgba(209,254,23,0.00); }
     }
     @keyframes ringDonePop {
@@ -928,8 +966,8 @@
     }
     .sfRemove.done{
       animation: ringDonePop .28s ease-out 1;
-      border-color: rgba(209,254,23,.65);
-      box-shadow: 0 10px 22px rgba(209,254,23,.10);
+      border-color: rgba(209,254,23,.55);
+      box-shadow: 0 10px 22px rgba(209,254,23,.09);
     }
 
     .unreadBadge{
@@ -938,8 +976,8 @@
       font-weight:900;
       padding:4px 8px;
       border-radius:999px;
-      border:1px solid rgba(209,254,23,.55);
-      background:rgba(209,254,23,.18);
+      border:1px solid rgba(209,254,23,.40);
+      background:rgba(209,254,23,.12);
       color:var(--accent);
     }
 
@@ -957,12 +995,12 @@
       line-height:1;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      transition: transform .16s ease, background .16s ease, border-color .16s ease, opacity .16s ease;
+      transition: transform .12s ease, background .16s ease, border-color .16s ease, opacity .16s ease;
       position:relative;
       overflow:hidden;
       user-select:none;
     }
-    .attachBtn:hover{ background:rgba(255,255,255,.07); border-color:rgba(209,254,23,.18); }
+    .attachBtn:hover{ background:rgba(255,255,255,.07); border-color:rgba(255,255,255,.18); }
     .attachBtn:active{ transform: translateY(1px); }
     .attachBtn input[type="file"]{ position:absolute; inset:0; opacity:0; cursor:pointer; }
 
@@ -970,8 +1008,8 @@
       height:40px;
       width:40px;
       border-radius:12px;
-      border:1px solid rgba(209,254,23,.55);
-      background:rgba(209,254,23,.20);
+      border:1px solid rgba(209,254,23,.44);
+      background:rgba(209,254,23,.14);
       color:var(--accent);
       cursor:pointer;
       font-weight:900;
@@ -981,14 +1019,14 @@
       line-height:1;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-
       transition:
         opacity .18s ease,
         transform .18s ease,
-        filter .18s ease;
+        filter .18s ease,
+        background .16s ease;
       will-change: opacity, transform;
     }
-    .sendIconBtn:hover{ background:rgba(209,254,23,.28); }
+    .sendIconBtn:hover{ background:rgba(209,254,23,.18); }
     .sendIconBtn:active{ transform:translateY(1px); }
     .sendIconBtn[disabled]{ opacity:.6; cursor:not-allowed; }
     .sendIconBtn.isHidden{
@@ -1037,12 +1075,14 @@
 </head>
 
 <body>
+  <!-- canvas background -->
+  <canvas id="bgfx" aria-hidden="true"></canvas>
+
   <div class="shell">
 
-    <div class="topbar glassBase liquid" style="border-radius:22px;">
-      <div class="glassInnerDim"></div>
-      <div class="liquidLayer"></div>
-      <div class="hoverSweep"></div>
+    <!-- TOPBAR (brightest glass) -->
+    <div class="topbar glassBase glass--topbar" style="border-radius:22px;">
+      <div class="glassGrain" aria-hidden="true"></div>
 
       <div class="brand">
         <span class="brandText">Чебур<span class="brandDot" aria-hidden="true"></span>net</span>
@@ -1061,10 +1101,9 @@
 
         <aside class="sidebar scroll">
 
-          <section class="card glassBase liquid">
-            <div class="glassInnerDim"></div>
-            <div class="liquidLayer"></div>
-            <div class="hoverSweep"></div>
+          <!-- CARD (medium glass) -->
+          <section class="card glassBase glass--card">
+            <div class="glassGrain" aria-hidden="true"></div>
 
             <div class="cardHeader">
               <div class="cardTitle">Поиск пользователя</div>
@@ -1072,16 +1111,15 @@
             <div class="cardBody">
               <div class="searchRow">
                 <input id="q" class="input" placeholder="username…" />
-                <button class="btn" id="btnFind">Find</button>
+                <button class="btn accent" id="btnFind">Find</button>
               </div>
               <div id="searchRes" class="list scroll" style="margin-top:10px; max-height:240px;"></div>
             </div>
           </section>
 
-          <section class="card glassBase liquid" style="flex:1; min-height:0;">
-            <div class="glassInnerDim"></div>
-            <div class="liquidLayer"></div>
-            <div class="hoverSweep"></div>
+          <!-- CARD (medium glass) -->
+          <section class="card glassBase glass--card" style="flex:1; min-height:0;">
+            <div class="glassGrain" aria-hidden="true"></div>
 
             <div class="cardHeader">
               <div class="cardTitle">Диалоги</div>
@@ -1094,10 +1132,9 @@
 
         </aside>
 
-        <main class="card glassBase liquid chat" id="chatPanel">
-          <div class="glassInnerDim"></div>
-          <div class="liquidLayer"></div>
-          <div class="hoverSweep"></div>
+        <!-- CHAT (darkest glass for hierarchy) -->
+        <main class="card glassBase glass--chat chat" id="chatPanel">
+          <div class="glassGrain" aria-hidden="true"></div>
 
           <div class="chatHeader" role="banner" aria-label="Chat header">
             <button class="backBtn" id="btnBack" type="button" aria-label="Back">←</button>
@@ -1153,10 +1190,9 @@
     <section class="page active" id="pageAccount" role="tabpanel" aria-labelledby="tabAccount">
       <div class="accountWrap scroll" style="overflow:auto;">
 
-        <section class="card glassBase liquid">
-          <div class="glassInnerDim"></div>
-          <div class="liquidLayer"></div>
-          <div class="hoverSweep"></div>
+        <!-- CARD (medium glass) -->
+        <section class="card glassBase glass--card">
+          <div class="glassGrain" aria-hidden="true"></div>
 
           <div class="cardHeader">
             <div class="cardTitle">Аккаунт</div>
@@ -1197,8 +1233,8 @@
                 </div>
 
                 <div class="authActions">
-                  <button class="btn" id="btnLogin" type="button">Войти</button>
-                  <button class="btn" id="btnRegister" type="button" style="display:none">Зарегистрироваться</button>
+                  <button class="btn accent" id="btnLogin" type="button">Войти</button>
+                  <button class="btn accent" id="btnRegister" type="button" style="display:none">Зарегистрироваться</button>
                 </div>
               </div>
             </div>
@@ -1228,7 +1264,7 @@
                     🖼️ Изменить фото
                     <input id="profileAvatarInput" type="file" accept="image/*" />
                   </label>
-                  <button class="btn" id="btnSaveProfile" type="button">Save</button>
+                  <button class="btn accent" id="btnSaveProfile" type="button">Save</button>
                 </div>
               </div>
 
@@ -1245,7 +1281,7 @@
 
   </div>
 
-  <!-- важно: этот файл ниже -->
-  <script src="/static/app.js?v=5000"></script>
+  <!-- важно: твой JS -->
+  <script src="/static/app.js?v=6002"></script>
 </body>
 </html>

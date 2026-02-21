@@ -1045,19 +1045,14 @@ async function pollOnce() {
     updateReadMarks();
     await maybeMarkRead();
 
-    // Learn support: if we asked after_id and got only new, ok. If we didn't ask, do a one-time probe later.
     if (_supportsAfterId === null) {
-      // quick probe: if server ignored after_id, we'd see older ids; but we didn't send it.
-      // Do a single explicit probe next tick.
       _supportsAfterId = false;
-      // Next time we open chat we can probe; keep conservative.
     }
 
     // Adaptive backoff
     if (appended === 0) {
       _pollNoNewCount++;
       if (_pollNoNewCount >= 3) {
-        // increase interval up to 20s
         const next = Math.min(20000, Math.round(_pollDelayMs * 1.6));
         if (next !== _pollDelayMs) {
           _pollDelayMs = next;
@@ -1066,7 +1061,6 @@ async function pollOnce() {
       }
     } else {
       _pollNoNewCount = 0;
-      // return to base if we were slow
       if (_pollDelayMs !== 2500) {
         _pollDelayMs = 2500;
         startChatPoll();
@@ -1334,7 +1328,6 @@ function renderAttachmentsNode(atts) {
     if (a.mime && a.mime.startsWith("image/")) {
       const wrap = mk("div");
       const img = mk("img", { src: url, alt: a.name || "image", loading: "lazy", decoding: "async" });
-      // avoid scroll jump: if user is at bottom, keep bottom after image load
       img.addEventListener("load", () => {
         if (isNearBottom() && msgs) msgs.scrollTop = msgs.scrollHeight;
       });
@@ -1456,7 +1449,6 @@ function getTopVisibleMessageAnchor() {
       return { id: el.getAttribute("data-message-id"), top: r.top };
     }
   }
-  // fallback to first
   const el = list[0];
   return { id: el.getAttribute("data-message-id"), top: el.getBoundingClientRect().top };
 }
@@ -1480,7 +1472,6 @@ async function openChat(chatId, otherId, title) {
 
   saveDraftForCurrentChat();
 
-  // Unsubscribe previous chat presence (if backend supports it)
   if (currentChatId && currentChatId !== cid) {
     wsSend({ type: "presence:unsubscribe", chat_id: currentChatId });
   }
@@ -1490,7 +1481,6 @@ async function openChat(chatId, otherId, title) {
   nextBeforeId = null;
   otherLastRead = 0;
 
-  // reset header presence/typing state
   _otherOnline = false;
   _isTyping = false;
   setOnlineUI(false);
@@ -1519,7 +1509,6 @@ async function openChat(chatId, otherId, title) {
       if (msgs.scrollTop < 40 && nextBeforeId) {
         const anchor = getTopVisibleMessageAnchor();
         await loadMessagesPage(nextBeforeId, true);
-        // restore
         requestAnimationFrame(() => restoreAnchor(anchor));
       }
       await maybeMarkRead();
@@ -1553,7 +1542,6 @@ async function loadMessagesPage(beforeId = null, prepend = false) {
   if (!prepend) {
     clearNode(msgs);
   } else {
-    // remove old "loadmore" hint if exists (we'll re-add it)
     const old = document.getElementById("loadmore");
     if (old) old.remove();
   }
@@ -1565,7 +1553,6 @@ async function loadMessagesPage(beforeId = null, prepend = false) {
   }
 
   if (prepend) {
-    // Insert new messages after loadmore
     const lm = document.getElementById("loadmore");
     const frag = document.createDocumentFragment();
     for (const m of items) frag.appendChild(renderMessageNode(m));
@@ -1733,7 +1720,6 @@ function sendTypingStartDebounced() {
   if (!isDialogVisible(currentChatId)) return;
 
   const now = Date.now();
-  // send start at most once per 1200ms
   if (now - _typingStartSentAt > 1200) {
     wsSend({ type: "typing:start", chat_id: currentChatId });
     _typingStartSentAt = now;
@@ -1825,10 +1811,59 @@ function bindUI() {
 }
 
 /* =========================
+   Runtime dithering (anti-banding)
+   ========================= */
+
+function installRuntimeDither() {
+  try {
+    const size = 256;
+    const c = document.createElement("canvas");
+    c.width = size;
+    c.height = size;
+
+    const ctx = c.getContext("2d", { alpha: true });
+    if (!ctx) return;
+
+    const img = ctx.createImageData(size, size);
+    const data = img.data;
+
+    // Centered noise around mid-gray -> ломает ступени без заметного “зерна”
+    // alpha низкая, дальше CSS ещё раз блюрит/контрастит
+    for (let i = 0; i < data.length; i += 4) {
+      const n = (Math.random() * 36 - 18) | 0; // -18..+18
+      const v = 128 + n;
+
+      data[i + 0] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
+      data[i + 3] = 28; // 0..255
+    }
+    ctx.putImageData(img, 0, 0);
+
+    // Смягчим noise ещё до CSS (чтобы точно не было “пикселей”)
+    const c2 = document.createElement("canvas");
+    c2.width = size;
+    c2.height = size;
+    const ctx2 = c2.getContext("2d", { alpha: true });
+    if (!ctx2) return;
+
+    ctx2.filter = "blur(0.6px) contrast(125%)";
+    ctx2.drawImage(c, 0, 0);
+
+    const url = c2.toDataURL("image/png");
+    document.documentElement.style.setProperty("--ditherRuntime", `url("${url}")`);
+  } catch (_) {
+    // fallback: CSS uses --ditherPng
+  }
+}
+
+/* =========================
    Boot
    ========================= */
 
 (async () => {
+  installRuntimeDither(); // <-- важно: до первой отрисовки
+
   loadPersistedUnread();
   loadPersistedDrafts();
 
