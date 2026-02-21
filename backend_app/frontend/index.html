@@ -608,13 +608,12 @@
       min-height:0;
     }
 
-    /* ✅ FIXED CHAT HEADER (ровно и стильно) */
+    /* ✅ TG-LIKE CHAT HEADER */
     .chatHeader{
       padding:10px 12px;
       display:flex;
       align-items:center;
-      justify-content:space-between;
-      gap:12px;
+      gap:10px;
       border-bottom:1px solid rgba(255,255,255,.10);
       min-height:64px;
       background:rgba(255,255,255,.02);
@@ -623,13 +622,8 @@
       position:relative;
       z-index:3;
     }
-    .chatLeft{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      min-width:0;
-      flex:1 1 auto;
-    }
+
+    /* back fixed at left */
     .backBtn{
       display:none;
       height:40px;
@@ -649,9 +643,10 @@
     .backBtn:hover{ background:rgba(255,255,255,.07); border-color:rgba(209,254,23,.20); }
     .backBtn:active{ transform: translateY(1px); }
 
+    /* avatar */
     .chatAvatar{
-      width:36px;
-      height:36px;
+      width:38px;
+      height:38px;
       border-radius:999px;
       overflow:hidden;
       border:1px solid rgba(255,255,255,.14);
@@ -662,6 +657,8 @@
       flex:0 0 auto;
     }
     .chatAvatar img{ width:100%; height:100%; object-fit:cover; display:block; }
+
+    /* name + status stack */
     .chatTitleWrap{
       min-width:0;
       display:flex;
@@ -669,6 +666,7 @@
       justify-content:center;
       line-height:1.12;
       gap:4px;
+      flex:1 1 auto;
     }
     .chatTitle{
       font-size:14px;
@@ -676,38 +674,36 @@
       white-space:nowrap;
       overflow:hidden;
       text-overflow:ellipsis;
-      max-width: 58vw;
+      max-width: 66vw;
       letter-spacing:.2px;
     }
-    .typingText{
-      font-size:12px;
-      color:var(--muted);
-      min-height:14px;
-      line-height:1;
-    }
 
-    .chatMeta{
+    .statusRow{
       display:flex;
       align-items:center;
       gap:8px;
-      color:var(--muted);
+      min-height:14px;
       font-size:12px;
-      flex:0 0 auto;
-      position:relative;
-      z-index:3;
-      white-space:nowrap;
+      color:var(--muted);
       line-height:1;
+      transition: opacity .18s ease;
+      will-change: opacity;
     }
+
     .dot{
       width:8px;
       height:8px;
       border-radius:50%;
       background:rgba(255,255,255,.18);
       flex:0 0 auto;
+      transition: transform .18s ease, opacity .18s ease, background .18s ease;
     }
     .dot.online{ background:var(--accent); box-shadow:0 0 0 3px rgba(209,254,23,.16); }
-    .onlineText{ position:relative; top:0; }
+    .dot.isHidden{ opacity:0; transform: scale(.85); }
 
+    .onlineText{ white-space:nowrap; }
+
+    /* messages */
     .messages{
       flex:1;
       min-height:0;
@@ -1032,7 +1028,7 @@
       .chats-open-chat .sidebar{ display:none; }
 
       .backBtn{ display:inline-flex; align-items:center; justify-content:center; }
-      .chatTitle{ max-width: 52vw; }
+      .chatTitle{ max-width: 56vw; }
       .msg{ max-width:92%; }
 
       body.chat-full .topbar{ display:none; }
@@ -1048,8 +1044,6 @@
       .searchRow{ grid-template-columns:1fr 92px; }
 
       .authRow2{ grid-template-columns: 1fr; }
-
-      /* composer stays 1 row; just tighten paddings via existing vars */
     }
   </style>
 </head>
@@ -1117,22 +1111,22 @@
           <div class="liquidLayer"></div>
           <div class="hoverSweep"></div>
 
-          <!-- ✅ New header layout -->
-          <div class="chatHeader">
-            <div class="chatLeft">
-              <button class="backBtn" id="btnBack" type="button" aria-label="Back">←</button>
+          <!-- ✅ TG-like header (back + avatar + name + status under name) -->
+          <div class="chatHeader" role="banner" aria-label="Chat header">
+            <button class="backBtn" id="btnBack" type="button" aria-label="Back">←</button>
 
-              <div class="chatAvatar" id="chatAvatar" aria-hidden="true">👤</div>
+            <div class="chatAvatar" id="chatAvatar" aria-hidden="true">👤</div>
 
-              <div class="chatTitleWrap">
-                <div class="chatTitle" id="chatTitle">Chat: —</div>
-                <div class="typingText" id="typingText"></div>
+            <div class="chatTitleWrap">
+              <div class="chatTitle" id="chatTitle">Chat: —</div>
+
+              <div class="statusRow" aria-label="Status">
+                <span class="dot" id="onlineDot"></span>
+                <span class="onlineText" id="onlineText">—</span>
+
+                <!-- оставляем для совместимости (JS теперь не выводит сюда) -->
+                <span id="typingText" style="display:none"></span>
               </div>
-            </div>
-
-            <div class="chatMeta" aria-label="Presence">
-              <span class="dot" id="onlineDot"></span>
-              <span class="onlineText" id="onlineText">—</span>
             </div>
           </div>
 

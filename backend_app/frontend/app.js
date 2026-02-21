@@ -41,6 +41,10 @@ let authMode = "login";
 // upload cancel
 let currentUploadXhr = null;
 
+// ✅ Presence/typing state for TG-like header
+let _otherOnline = false;
+let _isTyping = false;
+
 /* =========================
    DOM
    ========================= */
@@ -75,6 +79,7 @@ const searchRes = document.getElementById("searchRes");
 
 const onlineDot = document.getElementById("onlineDot");
 const onlineText = document.getElementById("onlineText");
+// typingText остается в DOM как id, но теперь статус показываем в onlineText (как в TG)
 const typingText = document.getElementById("typingText");
 
 const btnRegister = document.getElementById("btnRegister");
@@ -497,14 +502,38 @@ function renderMiniMePill() {
   mePill.innerHTML = `${av}<span>@${escapeHtml(me.username)}</span>`;
 }
 
+/* =========================
+   TG-like header status helpers
+   ========================= */
+
+function _paintHeaderStatus() {
+  if (!onlineText) return;
+
+  if (_isTyping) {
+    onlineText.textContent = "typing…";
+    // как в TG: во время typing точку можно скрыть, чтобы не путалось с online/offline
+    if (onlineDot) onlineDot.classList.add("isHidden");
+    return;
+  }
+
+  if (onlineDot) onlineDot.classList.remove("isHidden");
+  onlineText.textContent = _otherOnline ? "online" : "offline";
+}
+
 function setOnlineUI(on) {
-  onlineDot && onlineDot.classList.toggle("online", !!on);
-  if (onlineText) onlineText.textContent = on ? "online" : "offline";
+  _otherOnline = !!on;
+  onlineDot && onlineDot.classList.toggle("online", _otherOnline);
+  _paintHeaderStatus();
 }
 
 function setTypingUI(txt) {
-  if (!typingText) return;
-  typingText.textContent = txt || "";
+  const t = String(txt || "").trim();
+  _isTyping = !!t;
+
+  // typingText оставляем для совместимости (если где-то стили/логика)
+  if (typingText) typingText.textContent = "";
+
+  _paintHeaderStatus();
 }
 
 function isNearBottom() {
@@ -1073,15 +1102,18 @@ async function openChat(chatId, otherId, title) {
   nextBeforeId = null;
   otherLastRead = 0;
 
+  // reset header presence/typing state
+  _otherOnline = false;
+  _isTyping = false;
+  setOnlineUI(false);
+  setTypingUI("");
+
   setUnread(cid, false);
   restoreDraftForChat(cid);
 
   const other = otherByChatId.get(cid) || { id: otherId, username: title, avatar_url: null, avatar_file_id: null };
 
   setChatHeaderUser(other);
-
-  setTypingUI("");
-  setOnlineUI(false);
 
   if (msgs) msgs.innerHTML = `<div class="loading">Loading…</div>`;
 
