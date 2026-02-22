@@ -87,6 +87,7 @@
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
       transform: translateZ(0);
+      -webkit-tap-highlight-color: transparent; /* ✅ touch */
     }
 
     /* ===== Canvas background (no banding) ===== */
@@ -252,6 +253,8 @@
       align-items:center;
       justify-content:space-between;
       gap:10px;
+      flex-wrap:nowrap; /* ✅ desktop as-is */
+      min-width:0;
     }
 
     .brand{
@@ -264,6 +267,7 @@
       letter-spacing:.2px;
       position:relative;
       z-index:3;
+      min-width:0;
     }
     .brandText{ display:inline-block; }
     .brandDot{
@@ -289,6 +293,7 @@
       -webkit-backdrop-filter: blur(12px);
       position:relative;
       z-index:3;
+      min-width:0;
     }
     .tabBtn{
       height:38px;
@@ -324,6 +329,8 @@
       position:relative;
       z-index:3;
       white-space:nowrap;
+      flex:0 0 auto;
+      min-width:0;
     }
     .assistantLabel{
       display:flex;
@@ -362,6 +369,7 @@
       justify-content:flex-start;
       padding:2px;
       outline:none;
+      touch-action: manipulation; /* ✅ mobile tap */
     }
     .assistantTrack::after{
       content:"";
@@ -385,6 +393,38 @@
       opacity:0;
       width:1px;height:1px;
       pointer-events:none;
+    }
+
+    /* ✅ FIX: topbar layout on mobile (ничего не ломает на ПК) */
+    @media (max-width:980px){
+      .topbar{
+        flex-wrap:wrap;
+        justify-content:flex-start;
+        gap:8px;
+      }
+      .brand{
+        order:1;
+        flex:1 1 auto;
+      }
+      .assistantPill{
+        order:2;
+        margin-left:auto;
+      }
+      .tabs{
+        order:3;
+        width:100%;
+        justify-content:space-between;
+      }
+      .tabBtn{
+        flex:1 1 auto;
+        text-align:center;
+      }
+
+      /* если совсем узко — прячем текст, оставляем иконку + тумблер */
+      @media (max-width:420px){
+        .assistantLabel .aiText{ display:none; }
+        .assistantPill{ gap:8px; }
+      }
     }
 
     /* Assistant bubble */
@@ -484,6 +524,7 @@
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       transition: transform .12s ease, background .16s ease, border-color .16s ease;
+      touch-action: manipulation;
     }
     .assistantBtn:hover{ background: rgba(255,255,255,.08); }
     .assistantBtn:active{ transform:translateY(1px); }
@@ -576,6 +617,7 @@
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       transition: transform .12s ease, background .16s ease, border-color .16s ease;
+      touch-action: manipulation;
     }
     .btn:hover{ background: rgba(255,255,255,.08); }
     .btn:active{ transform:translateY(1px); }
@@ -645,6 +687,7 @@
       white-space:nowrap;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
+      touch-action: manipulation;
     }
     .fileBtn input[type="file"]{ position:absolute; inset:0; opacity:0; cursor:pointer; }
 
@@ -674,6 +717,7 @@
       justify-content:center;
       text-align:center;
       line-height:1;
+      touch-action: manipulation;
     }
     .authSwitchBtn:hover{
       background:rgba(255,255,255,.06);
@@ -772,6 +816,7 @@
       position:relative;
       user-select:none;
       transition: background .16s ease, border-color .16s ease, transform .12s ease;
+      touch-action: manipulation;
     }
     .item:hover{
       border-color: rgba(255,255,255,.16);
@@ -823,6 +868,7 @@
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       transition: transform .12s ease, background .16s ease, border-color .16s ease;
+      touch-action: manipulation;
     }
     .backBtn:hover{ background:rgba(255,255,255,.07); border-color:rgba(255,255,255,.18); }
     .backBtn:active{ transform: translateY(1px); }
@@ -1092,6 +1138,7 @@
       -webkit-backdrop-filter: blur(12px);
       transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease, color .18s ease;
       isolation:isolate;
+      touch-action: manipulation;
     }
     .sfRemove::before{
       content:"";
@@ -1190,6 +1237,7 @@
       position:relative;
       overflow:hidden;
       user-select:none;
+      touch-action: manipulation;
     }
     .attachBtn:hover{ background:rgba(255,255,255,.07); border-color:rgba(255,255,255,.18); }
     .attachBtn:active{ transform: translateY(1px); }
@@ -1216,6 +1264,7 @@
         filter .18s ease,
         background .16s ease;
       will-change: opacity, transform;
+      touch-action: manipulation;
     }
     .sendIconBtn:hover{ background:rgba(209,254,23,.18); }
     .sendIconBtn:active{ transform:translateY(1px); }
@@ -1492,6 +1541,6 @@
 
   </div>
 
-  <script src="/static/app.js?v=6006"></script>
+  <script src="/static/app.js?v=6008"></script>
 </body>
 </html>
