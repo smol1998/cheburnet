@@ -75,6 +75,11 @@ const dialogMetaByChatId = new Map(); // chatId -> { other, online, lastMsg, las
 const lastMsgFetchInFlight = new Map(); // chatId -> Promise
 let dialogsLiveTimer = null;
 
+// =========================
+// Profile UX state
+// =========================
+let _profileSaveInFlight = false;
+
 /* =========================
    DOM
    ========================= */
@@ -307,7 +312,6 @@ const LS_UNREAD_BASE = "unreadByChatId_v2";
 const LS_DRAFTS_BASE = "draftsByChatId_v2";
 
 function _persistScope() {
-  // different accounts => different keys
   return me && me.id ? `u${me.id}` : "anon";
 }
 
@@ -319,28 +323,132 @@ function _keyDrafts() { return `${LS_DRAFTS_BASE}_${_persistScope()}`; }
    ========================= */
 
 function resetDialogsStateAndUI() {
-  // timers
   stopDialogsLive();
   if (dialogsReloadTimer) { clearTimeout(dialogsReloadTimer); dialogsReloadTimer = null; }
   dialogsReloadInFlight = false;
 
-  // current open chat pointers (do not close chat panel, just reset list consistency)
   currentChatId = null;
   currentOtherId = null;
 
-  // in-memory maps
   otherByChatId.clear();
   dialogMetaByChatId.clear();
   lastMsgFetchInFlight.clear();
 
-  // IMPORTANT: per-user data should not leak
   unreadByChatId.clear();
   draftsByChatId.clear();
 
-  // UI list: clear fully and allow re-init
   if (dialogs) {
     clearNode(dialogs);
     delete dialogs.dataset.inited;
+  }
+}
+
+/* =========================
+   ✅ Save button FX (NO TEXT/UI CHANGES)
+   ========================= */
+
+let _btnFxInstalled = false;
+let _saveBtnFxTimer = null;
+
+function installProfileButtonFX() {
+  if (_btnFxInstalled) return;
+  _btnFxInstalled = true;
+  if (document.getElementById("profileBtnFxV1")) return;
+
+  const css = `
+@keyframes btnPulseAccent {
+  0%   { box-shadow: 0 0 0 0 rgba(209,254,23,.00), 0 0 0 0 rgba(209,254,23,.00); filter: brightness(1); transform: translateZ(0); }
+  45%  { box-shadow: 0 0 0 6px rgba(209,254,23,.10), 0 0 22px 0 rgba(209,254,23,.20); filter: brightness(1.08); }
+  100% { box-shadow: 0 0 0 0 rgba(209,254,23,.00), 0 0 0 0 rgba(209,254,23,.00); filter: brightness(1); }
+}
+@keyframes btnRippleOk {
+  0%   { box-shadow: 0 0 0 0 rgba(209,254,23,.00), 0 0 0 0 rgba(209,254,23,.00); filter: brightness(1.00); }
+  25%  { box-shadow: 0 0 0 2px rgba(209,254,23,.18), 0 0 16px 0 rgba(209,254,23,.22); filter: brightness(1.10); }
+  55%  { box-shadow: 0 0 0 10px rgba(209,254,23,.08), 0 0 26px 0 rgba(209,254,23,.18); filter: brightness(1.08); }
+  100% { box-shadow: 0 0 0 16px rgba(209,254,23,.00), 0 0 0 0 rgba(209,254,23,.00); filter: brightness(1.00); }
+}
+@keyframes btnFlashErr {
+  0%   { box-shadow: 0 0 0 0 rgba(255,77,77,.00), 0 0 0 0 rgba(255,77,77,.00); filter: brightness(1.00); }
+  30%  { box-shadow: 0 0 0 2px rgba(255,77,77,.22), 0 0 18px 0 rgba(255,77,77,.22); filter: brightness(1.08); }
+  100% { box-shadow: 0 0 0 10px rgba(255,77,77,.00), 0 0 0 0 rgba(255,77,77,.00); filter: brightness(1.00); }
+}
+@keyframes btnShakeTiny {
+  0%   { transform: translateX(0); }
+  18%  { transform: translateX(-1.2px); }
+  36%  { transform: translateX(1.2px); }
+  54%  { transform: translateX(-0.9px); }
+  72%  { transform: translateX(0.9px); }
+  100% { transform: translateX(0); }
+}
+#btnSaveProfile{
+  will-change: box-shadow, filter, transform;
+  transform: translateZ(0);
+}
+#btnSaveProfile.btnSaving{
+  animation: btnPulseAccent 0.95s ease-in-out infinite;
+}
+#btnSaveProfile.btnOkRipple{
+  animation: btnRippleOk .72s ease-out 1;
+}
+#btnSaveProfile.btnErrFlash{
+  animation: btnFlashErr .65s ease-out 1;
+}
+#btnSaveProfile.btnErrShake{
+  animation: btnShakeTiny .28s ease-in-out 1;
+}
+  `.trim();
+
+  const st = document.createElement("style");
+  st.id = "profileBtnFxV1";
+  st.textContent = css;
+  document.head.appendChild(st);
+}
+
+function _clearSaveBtnFxClasses() {
+  if (!btnSaveProfile) return;
+  btnSaveProfile.classList.remove("btnSaving", "btnOkRipple", "btnErrFlash", "btnErrShake");
+}
+
+function _setSaveBtnFx(state /* "idle"|"saving"|"ok"|"err" */) {
+  if (!btnSaveProfile) return;
+
+  if (_saveBtnFxTimer) {
+    clearTimeout(_saveBtnFxTimer);
+    _saveBtnFxTimer = null;
+  }
+
+  _clearSaveBtnFxClasses();
+
+  if (state === "saving") {
+    btnSaveProfile.classList.add("btnSaving");
+    btnSaveProfile.disabled = true;
+    btnSaveProfile.setAttribute("aria-busy", "true");
+    return;
+  }
+
+  btnSaveProfile.disabled = false;
+  btnSaveProfile.setAttribute("aria-busy", "false");
+
+  if (state === "ok") {
+    void btnSaveProfile.offsetWidth;
+    btnSaveProfile.classList.add("btnOkRipple");
+    _saveBtnFxTimer = setTimeout(() => {
+      btnSaveProfile && btnSaveProfile.classList.remove("btnOkRipple");
+    }, 780);
+    return;
+  }
+
+  if (state === "err") {
+    void btnSaveProfile.offsetWidth;
+    btnSaveProfile.classList.add("btnErrFlash");
+    _saveBtnFxTimer = setTimeout(() => {
+      if (!btnSaveProfile) return;
+      btnSaveProfile.classList.remove("btnErrFlash");
+      void btnSaveProfile.offsetWidth;
+      btnSaveProfile.classList.add("btnErrShake");
+      setTimeout(() => btnSaveProfile && btnSaveProfile.classList.remove("btnErrShake"), 320);
+    }, 180);
+    return;
   }
 }
 
@@ -620,6 +728,7 @@ function bindAvatarPreviews() {
       clearNode(profileAvatar);
       const img = mk("img", { src: url, alt: "avatar" });
       profileAvatar.appendChild(img);
+      // ⛔️ никаких доп. текстов — чтобы не ломать интерфейс
     });
   }
 }
@@ -778,7 +887,10 @@ function renderMiniMePill() {
   }
 
   const path = ensureAvatarPath(me);
-  const src = path ? fileUrl(path, me.avatar_file_id || "") : "";
+
+  // ✅ FIX: НЕ Date.now() — иначе аватар перезагружается при любом repaint
+  const v = me.avatar_file_id || "";
+  const src = path ? fileUrl(path, v) : "";
 
   clearNode(mePill);
 
@@ -863,7 +975,11 @@ function paintProfile() {
 
   if (profileAvatar) {
     const path = ensureAvatarPath(me);
-    const src = path ? fileUrl(path, me.avatar_file_id || "") : "";
+
+    // ✅ cache-bust только по avatar_file_id (и только если есть)
+    const v = me.avatar_file_id || "";
+    const src = path ? fileUrl(path, v) : "";
+
     clearNode(profileAvatar);
     if (src) {
       const img = mk("img", { src, alt: "avatar" });
@@ -1024,7 +1140,6 @@ async function register() {
 
     await loadMe();
 
-    // ✅ FIX: full reset after auth change (prevents чужие диалоги)
     resetDialogsStateAndUI();
     loadPersistedUnread();
     loadPersistedDrafts();
@@ -1059,7 +1174,6 @@ async function login() {
 
   await loadMe();
 
-  // ✅ FIX: full reset after auth change (prevents чужие диалоги)
   resetDialogsStateAndUI();
   loadPersistedUnread();
   loadPersistedDrafts();
@@ -1102,15 +1216,19 @@ function logout() {
 
   assistantSetEnabled(false);
 
-  // ✅ reset all dialogs state/UI so nothing leaks
   resetDialogsStateAndUI();
 
   setTab("account");
   setAuthMode("login");
 }
 
+/* =========================
+   ✅ SAVE PROFILE (ANIMATION ONLY, REAL UPDATE)
+   ========================= */
+
 async function saveProfile() {
   if (!token || !me) return;
+  if (_profileSaveInFlight) return;
 
   const by = profileBirthYear ? (profileBirthYear.value || "").trim() : "";
   const av = profileAvatarInput && profileAvatarInput.files ? profileAvatarInput.files[0] : null;
@@ -1119,24 +1237,51 @@ async function saveProfile() {
   const sameBirth = (me.birth_year || null) === (Number.isFinite(byInt) ? byInt : null);
   const hasAvatar = !!av;
 
-  if (sameBirth && !hasAvatar) return;
+  if (sameBirth && !hasAvatar) {
+    // нет изменений — тихо, без текста/плашек
+    _setSaveBtnFx("err");
+    return;
+  }
+
+  _profileSaveInFlight = true;
+  _setSaveBtnFx("saving");
 
   const form = new FormData();
   if (by) form.append("birth_year", by);
   if (av) form.append("avatar", av);
 
-  const r = await fetch(API + "/auth/profile_update_form", {
-    method: "POST",
-    headers: { Authorization: "Bearer " + token },
-    body: form,
-  });
+  let r;
+  try {
+    r = await fetch(API + "/auth/profile_update_form", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token },
+      body: form,
+    });
+  } catch (_) {
+    _profileSaveInFlight = false;
+    _setSaveBtnFx("err");
+    return;
+  }
 
-  if (!r.ok) return alert("Save failed: " + (await readError(r)));
+  if (!r.ok) {
+    _profileSaveInFlight = false;
+    _setSaveBtnFx("err");
+    return;
+  }
 
-  const j = await r.json();
-  me = j;
+  let j = null;
+  try { j = await r.json(); } catch (_) {}
+
+  // ✅ обновляем me => avatar_file_id меняется => URL меняется => реальная подмена аватара
+  me = j || me;
+
+  // очистим input файла (чтобы не “висел” выбранный)
   if (profileAvatarInput) profileAvatarInput.value = "";
+
   paintProfile();
+
+  _profileSaveInFlight = false;
+  _setSaveBtnFx("ok");
 }
 
 /* =========================
@@ -1540,7 +1685,10 @@ function _avatarKeyForUser(uobj) {
 
 function _renderAvatarIntoWrap(wrap, userObj) {
   const path = ensureAvatarPath(userObj);
-  const src = path ? fileUrl(path, userObj?.avatar_file_id || "") : "";
+
+  // ✅ cache-bust только по avatar_file_id, если есть (без Date.now)
+  const v = userObj?.avatar_file_id || "";
+  const src = path ? fileUrl(path, v) : "";
 
   clearNode(wrap);
 
@@ -1882,13 +2030,11 @@ async function loadDialogs({ silent = false } = {}) {
 
   installDialogsStyle();
 
-  // init once per session/user
   if (!dialogs.dataset.inited) {
     clearNode(dialogs);
     dialogs.dataset.inited = "1";
   }
 
-  // ✅ cleanup: remove old rows not present in new list (prevents чужие диалоги)
   const keep = new Set((list || []).map((d) => String(normChatId(d.chat_id))).filter(Boolean));
   Array.from(dialogs.querySelectorAll(".item[data-chatid]")).forEach((el) => {
     const cid = el.getAttribute("data-chatid") || "";
@@ -1948,7 +2094,10 @@ function setChatHeaderUser(other) {
 
   if (chatAvatar) {
     const path = ensureAvatarPath(other);
-    const src = path ? fileUrl(path, other?.avatar_file_id || "") : "";
+
+    // ✅ cache-bust только по avatar_file_id
+    const v = other?.avatar_file_id || "";
+    const src = path ? fileUrl(path, v) : "";
 
     clearNode(chatAvatar);
     if (src) {
@@ -2474,6 +2623,9 @@ function bindUI() {
 
   btnLogout && (btnLogout.onclick = logout);
 
+  // ✅ Save with animation
+  btnSaveProfile && (btnSaveProfile.onclick = saveProfile);
+
   if (file) {
     file.addEventListener("change", () => {
       const f = file.files && file.files[0];
@@ -2623,6 +2775,7 @@ function installRuntimeDither() {
 (async () => {
   installRuntimeDither();
   installDialogsStyle();
+  installProfileButtonFX();
 
   fillYears();
   bindAvatarPreviews();
@@ -2634,7 +2787,6 @@ function installRuntimeDither() {
   if (token) {
     await loadMe();
     if (me) {
-      // ✅ load per-user persisted state only after me is known
       loadPersistedUnread();
       loadPersistedDrafts();
 
