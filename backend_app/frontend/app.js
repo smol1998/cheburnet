@@ -50,61 +50,8 @@ let _isTyping = false;
 let _supportsAfterId = null; // unknown until tested
 
 // =========================
-// Presence (dialogs realtime)
+// GPT Assistant state
 // =========================
-const presenceSubscribedChatIds = new Set();     // what we already subscribed on this WS session
-const presenceOnlineByChatId = new Map();        // last known online state per chat_id (from WS)
-
-/**
- * Paint dot in dialogs list immediately (no reload required)
- */
-function paintDialogPresenceDot(chatId, online) {
-  const cid = normChatId(chatId);
-  if (!cid) return;
-
-  // store last known state (used when rerendering list)
-  presenceOnlineByChatId.set(cid, !!online);
-
-  const row = document.querySelector(`.item[data-chatid="${cid}"]`);
-  if (!row) return;
-
-  const dot = row.querySelector(".dialogRow .dot");
-  if (!dot) return;
-
-  dot.classList.toggle("online", !!online);
-}
-
-/**
- * Subscribe presence for a chat (dedup)
- */
-function presenceSubscribe(chatId) {
-  const cid = normChatId(chatId);
-  if (!cid) return;
-  if (!ws || ws.readyState !== 1) return;
-
-  if (presenceSubscribedChatIds.has(cid)) return;
-  presenceSubscribedChatIds.add(cid);
-  wsSend({ type: "presence:subscribe", chat_id: cid });
-}
-
-/**
- * Subscribe to presence for all chats we currently know + opened chat
- */
-function presenceSyncSubscriptions() {
-  if (!ws || ws.readyState !== 1) return;
-
-  // subscribe to all chats shown in list
-  for (const cid of otherByChatId.keys()) {
-    presenceSubscribe(cid);
-  }
-
-  // plus current chat (in case list not loaded yet)
-  if (currentChatId) presenceSubscribe(currentChatId);
-}
-
-/* =========================
-   GPT Assistant state
-   ========================= */
 const LS_ASSISTANT = "assistant_enabled_v1";
 let assistantEnabled = localStorage.getItem(LS_ASSISTANT) === "1";
 let assistantDebounceTimer = null;
@@ -120,6 +67,13 @@ const ASSISTANT_MIN_INTERVAL_MS = 1200;
 const ASSISTANT_MAX_DRAFT_CHARS = 1200;
 const ASSISTANT_MAX_CONTEXT_MESSAGES = 14;
 const ASSISTANT_MAX_MSG_CHARS = 800;
+
+// =========================
+// Dialogs (Telegram-like) state
+// =========================
+const dialogMetaByChatId = new Map(); // chatId -> { other, online, lastMsg, lastPreview, updatedAt }
+const lastMsgFetchInFlight = new Map(); // chatId -> Promise
+let dialogsLiveTimer = null;
 
 /* =========================
    DOM
@@ -339,6 +293,16 @@ function _clip(s, n) {
   return x.length <= n ? x : x.slice(0, n);
 }
 
+function _safeNameNoAt(username) {
+  const s = String(username || "").trim();
+  if (!s) return "—";
+  return s.startsWith("@") ? s.slice(1) : s;
+}
+
+function _sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 /* =========================
    Assistant (GPT helper)
    ========================= */
@@ -462,7 +426,6 @@ async function assistantRequestSuggestion(reason = "idle") {
     });
 
     if (!r.ok) {
-      // 429 / 502 / etc — просто молча
       assistantBusy = false;
       return;
     }
@@ -489,7 +452,6 @@ function assistantScheduleDebounced() {
   if (!token || !me) return;
   if (!currentChatId) return;
 
-  // не показываем/не генерим если пользователь прикрепил файл и нет текста
   const v = (text && text.value ? text.value.trim() : "");
   if (!v) return;
 
@@ -517,6 +479,9 @@ function setTab(name) {
   if (!isChats) {
     chatsLayout && chatsLayout.classList.remove("chats-open-chat");
     document.body.classList.remove("chat-full");
+    stopDialogsLive();
+  } else {
+    startDialogsLive();
   }
 }
 
@@ -778,7 +743,7 @@ function renderMiniMePill() {
   }
 
   const path = ensureAvatarPath(me);
-  const src = path ? fileUrl(path, me.avatar_file_id || Date.now()) : "";
+  const src = path ? fileUrl(path, me.avatar_file_id || "") : "";
 
   clearNode(mePill);
 
@@ -863,7 +828,7 @@ function paintProfile() {
 
   if (profileAvatar) {
     const path = ensureAvatarPath(me);
-    const src = path ? fileUrl(path, me.avatar_file_id || Date.now()) : "";
+    const src = path ? fileUrl(path, me.avatar_file_id || "") : "";
     clearNode(profileAvatar);
     if (src) {
       const img = mk("img", { src, alt: "avatar" });
@@ -917,15 +882,12 @@ function paintUnreadBadge(chatId, show) {
   const el = document.querySelector(`.item[data-chatid="${cid}"]`);
   if (!el) return;
 
-  const row = el.querySelector(".dialogRow");
-  if (!row) return;
-
-  const old = row.querySelector(".unreadBadge");
+  const old = el.querySelector(".unreadBadge");
   if (!show) {
     if (old) old.remove();
     return;
   }
-  if (!old) row.appendChild(mk("span", { class: "unreadBadge", text: "NEW" }));
+  if (!old) el.appendChild(mk("span", { class: "unreadBadge", text: "NEW" }));
 }
 
 function setUnread(chatId, val) {
@@ -1088,17 +1050,14 @@ function logout() {
   try { if (ws) ws.close(); } catch (_) {}
   ws = null;
 
-  // reset presence caches
-  presenceSubscribedChatIds.clear();
-  presenceOnlineByChatId.clear();
-
   setAccountMode(false);
   renderMiniMePill();
 
   clearSelectedFileUI();
 
-  // assistant off on logout
   assistantSetEnabled(false);
+
+  stopDialogsLive();
 
   setTab("account");
   setAuthMode("login");
@@ -1152,9 +1111,6 @@ function connectWS() {
   try { if (ws) ws.close(); } catch (_) {}
   ws = null;
 
-  // new WS session => reset subscription dedup
-  presenceSubscribedChatIds.clear();
-
   if (!token) return;
 
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -1162,9 +1118,7 @@ function connectWS() {
 
   ws.onopen = () => {
     wsRetry = 0;
-
-    // subscribe to all known chats + current (realtime dots in dialogs)
-    presenceSyncSubscriptions();
+    if (currentChatId) wsSend({ type: "presence:subscribe", chat_id: currentChatId });
   };
 
   ws.onclose = () => {
@@ -1186,6 +1140,9 @@ function connectWS() {
 
       const senderId = msg?.sender_id;
 
+      // ✅ move dialog to top ONLY because of real new message
+      updateDialogPreviewFromMessage(cid, msg, { moveToTop: true });
+
       if (isDialogVisible(cid)) {
         if (msg?.id && !document.querySelector(`.msg[data-message-id="${msg.id}"]`)) {
           renderMessage(msg);
@@ -1201,14 +1158,20 @@ function connectWS() {
 
     if (data.type === "presence:state") {
       const cid = normChatId(data.chat_id);
-      if (!cid) return;
 
-      // ✅ always update dialogs dot immediately (no reload)
-      paintDialogPresenceDot(cid, !!data.online);
-
-      // ✅ update header if it’s current chat + current other user
-      if (cid === currentChatId && data.user_id === currentOtherId) {
+      // header: only for opened chat
+      if (cid && cid === currentChatId && data.user_id === currentOtherId) {
         if (isDialogVisible(currentChatId)) setOnlineUI(!!data.online);
+      }
+
+      // dialogs list: update online dot (no re-render, no reorder)
+      if (cid && data.user_id) {
+        const meta = dialogMetaByChatId.get(cid);
+        if (meta && meta.other && meta.other.id === data.user_id) {
+          meta.online = !!data.online;
+          dialogMetaByChatId.set(cid, meta);
+          paintDialogOnline(cid, !!data.online);
+        }
       }
     }
 
@@ -1296,6 +1259,9 @@ async function pollOnce() {
       if (isDialogVisible(currentChatId)) {
         renderMessage(m);
         appended++;
+
+        // ✅ treat as "new message arrived" -> move dialog to top
+        updateDialogPreviewFromMessage(currentChatId, m, { moveToTop: true });
       }
     }
 
@@ -1326,48 +1292,508 @@ async function pollOnce() {
 }
 
 /* =========================
-   Avatars in dialogs
+   Time formatting (MSK)
    ========================= */
 
-function renderAvatarNode(userObj, sizePx = 22) {
-  const path = ensureAvatarPath(userObj);
-  const v = userObj && userObj.avatar_file_id ? userObj.avatar_file_id : Date.now();
-  const src = path ? fileUrl(path, v) : "";
+function _parseServerISO(iso) {
+  if (!iso) return null;
+  let s = String(iso).trim();
+  if (!/[zZ]$/.test(s) && !/[+-]\d\d:\d\d$/.test(s)) s += "Z";
+  const d = new Date(s);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
 
-  const boxStyle =
-    `width:${sizePx}px;height:${sizePx}px;border-radius:999px;` +
-    `overflow:hidden;display:inline-flex;align-items:center;justify-content:center;` +
-    `border:1px solid rgba(255,255,255,.12);flex:0 0 auto;`;
+const _mskFmt = new Intl.DateTimeFormat("ru-RU", {
+  timeZone: "Europe/Moscow",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
-  const span = mk("span", { style: boxStyle });
+function formatTimeMSK(iso) {
+  const d = _parseServerISO(iso);
+  if (!d) return "";
+  return _mskFmt.format(d);
+}
 
-  if (!src) {
-    span.style.color = "rgba(255,255,255,.35)";
-    span.style.fontWeight = "900";
-    span.style.fontSize = "12px";
-    span.textContent = "?";
-    return span;
+/* =========================
+   Dialogs (Telegram-like UI)
+   ========================= */
+
+function installDialogsStyle() {
+  if (document.getElementById("dlgStyleV1")) return;
+
+  const css = `
+.item.dlgItem{
+  padding: 10px 12px !important;
+  border-radius: 16px !important;
+  display:flex;
+  align-items:center;
+  gap: 12px;
+}
+.item.dlgItem.active{
+  border-color: rgba(209,254,23,.28) !important;
+  background: rgba(209,254,23,.06) !important;
+}
+.dlgAvatarWrap{
+  position:relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  overflow:hidden;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  flex: 0 0 auto;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.dlgAvatarWrap img{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  display:block;
+}
+.dlgOnlineDot{
+  position:absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid rgba(0,0,0,.55);
+  background: rgba(255,255,255,.18);
+  box-shadow: 0 6px 14px rgba(0,0,0,.35);
+}
+.dlgOnlineDot.online{
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(209,254,23,.12), 0 6px 14px rgba(0,0,0,.35);
+}
+.dlgBody{
+  min-width:0;
+  flex:1 1 auto;
+  display:flex;
+  flex-direction:column;
+  gap: 4px;
+}
+.dlgTop{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  min-width:0;
+}
+.dlgName{
+  min-width:0;
+  flex:1 1 auto;
+  font-weight: 900;
+  font-size: 13.5px;
+  color: rgba(255,255,255,.92);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.dlgTime{
+  flex:0 0 auto;
+  font-size: 11px;
+  color: rgba(255,255,255,.42);
+  white-space:nowrap;
+}
+.dlgBottom{
+  display:flex;
+  align-items:center;
+  gap: 6px;
+  min-width:0;
+  line-height:1.15;
+}
+.dlgPrefix{
+  flex:0 0 auto;
+  font-size: 12px;
+  color: rgba(255,255,255,.46);
+}
+.dlgText{
+  min-width:0;
+  flex: 1 1 auto;
+  font-size: 12px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.dlgText.recv{ color: rgba(255,255,255,.68); }
+.dlgText.sent{ color: rgba(255,255,255,.56); }
+.dlgAttIcon{
+  flex:0 0 auto;
+  opacity: .85;
+}
+.unreadBadge{
+  margin-left:auto;
+  align-self:flex-start;
+}
+  `.trim();
+
+  const st = document.createElement("style");
+  st.id = "dlgStyleV1";
+  st.textContent = css;
+  document.head.appendChild(st);
+}
+
+function paintDialogOnline(chatId, online) {
+  const cid = normChatId(chatId);
+  if (!cid) return;
+  const el = document.querySelector(`.item[data-chatid="${cid}"]`);
+  if (!el) return;
+
+  const dot = el.querySelector(".dlgOnlineDot");
+  if (!dot) return;
+  dot.classList.toggle("online", !!online);
+}
+
+function paintDialogActive(chatId) {
+  document.querySelectorAll(".item.dlgItem").forEach((n) => n.classList.remove("active"));
+  const cid = normChatId(chatId);
+  if (!cid) return;
+  const el = document.querySelector(`.item[data-chatid="${cid}"]`);
+  if (el) el.classList.add("active");
+}
+
+function dialogAttachmentPreviewFromMsg(m) {
+  const atts = m?.attachments || [];
+  if (!atts.length) return null;
+
+  const a = atts[0];
+  const mime = (a && a.mime) ? String(a.mime) : "";
+
+  if (mime.startsWith("image/")) return { icon: "🖼️", label: "Фото" };
+  if (mime.startsWith("video/")) return { icon: "🎥", label: "Видео" };
+  if (mime.startsWith("audio/")) return { icon: "🎵", label: "Аудио" };
+  return { icon: "📎", label: "Файл" };
+}
+
+function buildDialogPreviewFromMsg(m) {
+  if (!m) {
+    return { time: "", text: "—", isMe: false, kind: null };
   }
 
-  const img = mk("img", {
-    src,
-    alt: "avatar",
-    style: "width:100%;height:100%;object-fit:cover;display:block",
+  const isMe = !!(me && m.sender_id === me.id);
+
+  const txt = String(m.text || "").trim();
+  const kind = dialogAttachmentPreviewFromMsg(m);
+
+  let previewText = "";
+  if (txt) previewText = txt.replace(/\s+/g, " ").trim();
+  else if (kind) previewText = kind.label;
+  else previewText = "—";
+
+  return {
+    time: formatTimeMSK(m.created_at),
+    text: previewText,
+    isMe,
+    kind,
+  };
+}
+
+function _avatarKeyForUser(uobj) {
+  if (!uobj) return "";
+  // stable key: if avatar changes, avatar_file_id changes
+  if (uobj.avatar_file_id) return `file:${uobj.avatar_file_id}`;
+  if (uobj.avatar_url) return `url:${uobj.avatar_url}`;
+  return "";
+}
+
+function _renderAvatarIntoWrap(wrap, userObj) {
+  const path = ensureAvatarPath(userObj);
+  const src = path ? fileUrl(path, userObj?.avatar_file_id || "") : "";
+
+  clearNode(wrap);
+
+  if (src) {
+    const img = mk("img", { src, alt: "avatar" });
+    img.addEventListener("error", () => {
+      clearNode(wrap);
+      wrap.appendChild(mk("span", { text: "👤", style: "opacity:.55;font-weight:900;" }));
+    });
+    wrap.appendChild(img);
+  } else {
+    wrap.appendChild(mk("span", { text: "👤", style: "opacity:.55;font-weight:900;" }));
+  }
+
+  // online dot is appended by caller
+}
+
+function renderDialogRowSkeleton({ chatId, other, online, lastPreview, hasUnread }) {
+  const cid = normChatId(chatId);
+  const uname = _safeNameNoAt(other?.username);
+
+  const row = mk("div", {
+    class: "item dlgItem",
+    dataset: { chatid: cid ?? "", avatarkey: _avatarKeyForUser(other) },
   });
 
-  img.addEventListener("error", () => {
-    clearNode(span);
-    span.style.color = "rgba(255,255,255,.35)";
-    span.style.fontWeight = "900";
-    span.style.fontSize = "12px";
-    span.style.display = "inline-flex";
-    span.style.alignItems = "center";
-    span.style.justifyContent = "center";
-    span.textContent = "?";
+  const avatarWrap = mk("div", { class: "dlgAvatarWrap" });
+  _renderAvatarIntoWrap(avatarWrap, other);
+  const onlineDot = mk("span", { class: `dlgOnlineDot ${online ? "online" : ""}` });
+  avatarWrap.appendChild(onlineDot);
+
+  const body = mk("div", { class: "dlgBody" });
+  const top = mk("div", { class: "dlgTop" });
+
+  const name = mk("div", { class: "dlgName", text: uname });
+  const time = mk("div", { class: "dlgTime", text: lastPreview?.time || "" });
+
+  top.appendChild(name);
+  top.appendChild(time);
+
+  const bottom = mk("div", { class: "dlgBottom" });
+
+  const isMe = !!lastPreview?.isMe;
+  const prefix = mk("span", { class: "dlgPrefix", text: isMe ? "Вы:" : "" });
+  const attIcon = mk("span", { class: "dlgAttIcon", text: "" });
+  const txt = mk("span", { class: isMe ? "dlgText sent" : "dlgText recv", text: lastPreview?.text || "—" });
+
+  bottom.appendChild(prefix);
+  bottom.appendChild(attIcon);
+  bottom.appendChild(txt);
+
+  body.appendChild(top);
+  body.appendChild(bottom);
+
+  row.appendChild(avatarWrap);
+  row.appendChild(body);
+
+  if (hasUnread) row.appendChild(mk("span", { class: "unreadBadge", text: "NEW" }));
+
+  row.addEventListener("click", () => openChat(cid, other.id, other.username || ""));
+
+  // set attachment icon visibility
+  _paintDialogPreviewBits(row, lastPreview);
+
+  return row;
+}
+
+function _paintDialogPreviewBits(rowEl, lastPreview) {
+  const isMe = !!lastPreview?.isMe;
+  const prefixEl = rowEl.querySelector(".dlgPrefix");
+  if (prefixEl) prefixEl.textContent = isMe ? "Вы:" : "";
+
+  const txtEl = rowEl.querySelector(".dlgText");
+  if (txtEl) {
+    txtEl.classList.toggle("sent", isMe);
+    txtEl.classList.toggle("recv", !isMe);
+    txtEl.textContent = lastPreview?.text || "—";
+  }
+
+  const timeEl = rowEl.querySelector(".dlgTime");
+  if (timeEl) timeEl.textContent = lastPreview?.time || "";
+
+  const iconEl = rowEl.querySelector(".dlgAttIcon");
+  if (iconEl) {
+    const shouldShowIcon = !!(lastPreview?.kind && (String(lastPreview?.text || "").trim() === (lastPreview.kind.label || "")));
+    iconEl.textContent = shouldShowIcon ? lastPreview.kind.icon : "";
+    iconEl.style.display = shouldShowIcon ? "inline" : "none";
+  }
+}
+
+function _updateDialogRowInPlace({ cid, meta }) {
+  const row = dialogs?.querySelector(`.item[data-chatid="${cid}"]`);
+  if (!row) return;
+
+  // online
+  paintDialogOnline(cid, !!meta.online);
+
+  // name (without @)
+  const nameEl = row.querySelector(".dlgName");
+  if (nameEl) nameEl.textContent = _safeNameNoAt(meta.other?.username);
+
+  // avatar: update ONLY if key changed (fixes constant reload)
+  const newKey = _avatarKeyForUser(meta.other);
+  const oldKey = row.dataset.avatarkey || "";
+  if (newKey !== oldKey) {
+    row.dataset.avatarkey = newKey;
+    const wrap = row.querySelector(".dlgAvatarWrap");
+    if (wrap) {
+      const dot = wrap.querySelector(".dlgOnlineDot");
+      _renderAvatarIntoWrap(wrap, meta.other);
+      wrap.appendChild(dot || mk("span", { class: `dlgOnlineDot ${meta.online ? "online" : ""}` }));
+      paintDialogOnline(cid, !!meta.online);
+    }
+  }
+
+  // preview/time/icon/prefix
+  const lp = meta.lastPreview || { time: "", text: "—", isMe: false, kind: null };
+  _paintDialogPreviewBits(row, lp);
+
+  // unread badge
+  const shouldUnread = unreadByChatId.get(cid) === true;
+  const badge = row.querySelector(".unreadBadge");
+  if (shouldUnread && !badge) row.appendChild(mk("span", { class: "unreadBadge", text: "NEW" }));
+  if (!shouldUnread && badge) badge.remove();
+
+  // active state
+  row.classList.toggle("active", currentChatId === cid);
+}
+
+function moveDialogToTop(chatId) {
+  const cid = normChatId(chatId);
+  if (!cid || !dialogs) return;
+  const el = dialogs.querySelector(`.item[data-chatid="${cid}"]`);
+  if (!el) return;
+  dialogs.insertBefore(el, dialogs.firstChild);
+}
+
+function updateDialogPreviewFromMessage(chatId, msg, { moveToTop = true } = {}) {
+  const cid = normChatId(chatId);
+  if (!cid) return;
+
+  const meta = dialogMetaByChatId.get(cid) || {};
+  const prevMsgId = meta.lastMsg?.id || 0;
+  const nextMsgId = msg?.id || 0;
+
+  // prevent older hydration from overriding newer
+  if (nextMsgId && prevMsgId && nextMsgId < prevMsgId) {
+    return;
+  }
+
+  meta.lastMsg = msg;
+  meta.lastPreview = buildDialogPreviewFromMsg(msg);
+  meta.updatedAt = Date.now();
+
+  if (!meta.other) meta.other = otherByChatId.get(cid) || meta.other || null;
+
+  dialogMetaByChatId.set(cid, meta);
+
+  // ensure row exists
+  const rowExists = hasDialogRowInDOM(cid);
+  if (!rowExists && dialogs) {
+    const other = meta.other || { id: 0, username: "—" };
+    const row = renderDialogRowSkeleton({
+      chatId: cid,
+      other,
+      online: !!meta.online,
+      lastPreview: meta.lastPreview,
+      hasUnread: unreadByChatId.get(cid) === true,
+    });
+    dialogs.appendChild(row);
+  } else {
+    _updateDialogRowInPlace({ cid, meta });
+  }
+
+  if (moveToTop) moveDialogToTop(cid);
+}
+
+async function fetchLastMessageForDialog(chatId) {
+  const cid = normChatId(chatId);
+  if (!cid || !token) return null;
+
+  if (lastMsgFetchInFlight.has(cid)) return lastMsgFetchInFlight.get(cid);
+
+  const p = (async () => {
+    try {
+      const url = new URL(API + `/chats/dm/${cid}/messages`, location.origin);
+      url.searchParams.set("limit", "1");
+
+      const r = await fetch(url.toString(), { headers: { Authorization: "Bearer " + token } });
+      if (!r.ok) return null;
+
+      const j = await r.json();
+      const items = j.items || [];
+      const last = items.length ? items[items.length - 1] : null;
+      return last;
+    } catch (_) {
+      return null;
+    } finally {
+      lastMsgFetchInFlight.delete(cid);
+    }
+  })();
+
+  lastMsgFetchInFlight.set(cid, p);
+  return p;
+}
+
+async function hydrateDialogsLastMessagesStable(list) {
+  // fetch previews but DO NOT move dialogs (fix: jumping order)
+  const MAX_CONC = 4;
+  const queue = (list || []).map((d) => normChatId(d.chat_id)).filter(Boolean);
+
+  let idx = 0;
+  const workers = new Array(MAX_CONC).fill(0).map(async () => {
+    while (idx < queue.length) {
+      const cid = queue[idx++];
+      const meta = dialogMetaByChatId.get(cid);
+      if (!meta) continue;
+
+      // if already has preview, don't spam
+      if (meta.lastMsg && meta.updatedAt && (Date.now() - meta.updatedAt < 20000)) continue;
+
+      const last = await fetchLastMessageForDialog(cid);
+      if (last) {
+        // update WITHOUT moving to top
+        updateDialogPreviewFromMessage(cid, last, { moveToTop: false });
+      }
+
+      await _sleep(40);
+    }
   });
 
-  span.appendChild(img);
-  return span;
+  await Promise.all(workers);
+}
+
+async function refreshDialogsPresenceOnly() {
+  if (!token) return;
+
+  const r = await fetch(API + "/chats/dm/list", { headers: { Authorization: "Bearer " + token } });
+  if (!r.ok) return;
+
+  const list = await r.json();
+
+  // update meta + UI in-place, no clearing, no reordering
+  for (const d of (list || [])) {
+    const cid = normChatId(d.chat_id);
+    if (!cid) continue;
+
+    const other = d.other || {};
+    const online = !!d.other_online;
+
+    if (cid && other) otherByChatId.set(cid, other);
+
+    const meta = dialogMetaByChatId.get(cid) || {};
+    meta.other = other;
+    meta.online = online;
+    dialogMetaByChatId.set(cid, meta);
+
+    if (hasDialogRowInDOM(cid)) _updateDialogRowInPlace({ cid, meta });
+    else {
+      // new dialog appeared — append (order stable; will rise when new message comes)
+      if (dialogs) {
+        const row = renderDialogRowSkeleton({
+          chatId: cid,
+          other,
+          online,
+          lastPreview: meta.lastPreview || { time: "", text: "…", isMe: false, kind: null },
+          hasUnread: unreadByChatId.get(cid) === true,
+        });
+        dialogs.appendChild(row);
+      }
+    }
+  }
+}
+
+function startDialogsLive() {
+  if (dialogsLiveTimer) return;
+  if (!token) return;
+
+  // keep online statuses (and new chats) updated,
+  // but NEVER rebuild list => no avatar reload & no order jump
+  dialogsLiveTimer = setInterval(async () => {
+    if (!token) return;
+    if (!isChatsTabActive()) return;
+
+    try {
+      await refreshDialogsPresenceOnly();
+    } catch (_) {}
+  }, 12000);
+}
+
+function stopDialogsLive() {
+  if (dialogsLiveTimer) clearInterval(dialogsLiveTimer);
+  dialogsLiveTimer = null;
 }
 
 /* =========================
@@ -1420,63 +1846,70 @@ async function startDM(otherId, username) {
   if (cid) openChat(cid, otherId, username);
 }
 
-async function loadDialogs() {
+async function loadDialogs({ silent = false } = {}) {
   if (!token) return;
 
   const r = await fetch(API + "/chats/dm/list", { headers: { Authorization: "Bearer " + token } });
-  if (!r.ok) return alert("Load dialogs failed: " + (await readError(r)));
+  if (!r.ok) {
+    if (!silent) alert("Load dialogs failed: " + (await readError(r)));
+    return;
+  }
 
   const list = await r.json();
 
   if (!dialogs) return;
-  clearNode(dialogs);
 
+  installDialogsStyle();
+
+  // FIRST load: build rows once (no clears later needed)
+  if (!dialogs.dataset.inited) {
+    clearNode(dialogs);
+    dialogs.dataset.inited = "1";
+  }
+
+  // Build/update meta and ensure each row exists WITHOUT clearing => stable order
   for (const d of (list || [])) {
     const cid = normChatId(d.chat_id);
+    if (!cid) continue;
+
     const other = d.other || {};
-
-    // base from server list
-    let online = !!d.other_online;
-
-    // ✅ if we already have fresher presence from WS, use it
-    if (cid && presenceOnlineByChatId.has(cid)) {
-      online = !!presenceOnlineByChatId.get(cid);
-    }
+    const online = !!d.other_online;
 
     if (cid && other) otherByChatId.set(cid, other);
 
-    const hasUnread = cid ? unreadByChatId.get(cid) === true : false;
-
-    const row = mk("div", {
-      class: "item",
-      dataset: { chatid: cid ?? "" },
+    const prev = dialogMetaByChatId.get(cid) || {};
+    dialogMetaByChatId.set(cid, {
+      other,
+      online,
+      lastMsg: prev.lastMsg || null,
+      lastPreview: prev.lastPreview || { time: "", text: "…", isMe: false, kind: null },
+      updatedAt: prev.updatedAt || 0,
     });
 
-    const dialogRow = mk("div", { class: "dialogRow", style: "display:flex;align-items:center;gap:8px" });
+    const meta = dialogMetaByChatId.get(cid);
+    const exists = hasDialogRowInDOM(cid);
 
-    const dot = mk("span", { class: `dot ${online ? "online" : ""}` });
-    const av = renderAvatarNode(other, 22);
-    const name = mk("div", { style: "font-weight:600", text: `@${other.username || ""}` });
-
-    dialogRow.appendChild(dot);
-    dialogRow.appendChild(av);
-    dialogRow.appendChild(name);
-
-    if (hasUnread) dialogRow.appendChild(mk("span", { class: "unreadBadge", text: "NEW" }));
-
-    row.appendChild(dialogRow);
-    row.appendChild(mk("small", { text: `chat_id: ${cid ?? "—"}` }));
-
-    row.addEventListener("click", () => openChat(cid, other.id, other.username || ""));
-    dialogs.appendChild(row);
+    if (!exists) {
+      const row = renderDialogRowSkeleton({
+        chatId: cid,
+        other,
+        online,
+        lastPreview: meta?.lastPreview,
+        hasUnread: unreadByChatId.get(cid) === true,
+      });
+      dialogs.appendChild(row);
+    } else {
+      _updateDialogRowInPlace({ cid, meta });
+    }
   }
 
+  // ensure unread badges reflect persisted state
   for (const [cid, v] of unreadByChatId.entries()) {
     paintUnreadBadge(cid, v === true);
   }
 
-  // ✅ after rendering list: ensure presence subscriptions so dots update instantly
-  presenceSyncSubscriptions();
+  // hydrate last messages (stable: no reordering)
+  hydrateDialogsLastMessagesStable(list).catch(() => {});
 }
 
 /* =========================
@@ -1490,8 +1923,7 @@ function setChatHeaderUser(other) {
 
   if (chatAvatar) {
     const path = ensureAvatarPath(other);
-    const v = other && other.avatar_file_id ? other.avatar_file_id : Date.now();
-    const src = path ? fileUrl(path, v) : "";
+    const src = path ? fileUrl(path, other?.avatar_file_id || "") : "";
 
     clearNode(chatAvatar);
     if (src) {
@@ -1502,26 +1934,6 @@ function setChatHeaderUser(other) {
       chatAvatar.textContent = "👤";
     }
   }
-}
-
-function _parseServerISO(iso) {
-  if (!iso) return null;
-  let s = String(iso).trim();
-  if (!/[zZ]$/.test(s) && !/[+-]\d\d:\d\d$/.test(s)) s += "Z";
-  const d = new Date(s);
-  return Number.isFinite(d.getTime()) ? d : null;
-}
-
-const _mskFmt = new Intl.DateTimeFormat("ru-RU", {
-  timeZone: "Europe/Moscow",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-function formatTimeMSK(iso) {
-  const d = _parseServerISO(iso);
-  if (!d) return "";
-  return _mskFmt.format(d);
 }
 
 function _setMetaVisible(node, visible) {
@@ -1589,7 +2001,7 @@ function renderAttachmentsNode(atts) {
   const box = mk("div", { class: "attachment" });
 
   for (const a of atts) {
-    const url = fileUrl(a.url, a.id || Date.now());
+    const url = fileUrl(a.url, a.id || "");
 
     if (a.mime && a.mime.startsWith("image/")) {
       const wrap = mk("div");
@@ -1738,7 +2150,10 @@ async function openChat(chatId, otherId, title) {
 
   saveDraftForCurrentChat();
 
-  // (не делаем unsubscribe — пусть presence обновляет весь список)
+  if (currentChatId && currentChatId !== cid) {
+    wsSend({ type: "presence:unsubscribe", chat_id: currentChatId });
+  }
+
   currentChatId = cid;
   currentOtherId = otherId;
   nextBeforeId = null;
@@ -1752,7 +2167,8 @@ async function openChat(chatId, otherId, title) {
   setUnread(cid, false);
   restoreDraftForChat(cid);
 
-  // смена чата: прячем подсказку
+  paintDialogActive(cid);
+
   assistantHideBubble();
   assistantLastSentDraft = "";
   assistantLastSuggestion = "";
@@ -1765,8 +2181,7 @@ async function openChat(chatId, otherId, title) {
     msgs.appendChild(mk("div", { class: "loading", text: "Loading…" }));
   }
 
-  // ensure presence subscription for this chat
-  presenceSubscribe(cid);
+  wsSend({ type: "presence:subscribe", chat_id: cid });
 
   await loadMessagesPage();
 
@@ -1831,6 +2246,12 @@ async function loadMessagesPage(beforeId = null, prepend = false) {
     const frag = document.createDocumentFragment();
     for (const m of items) frag.appendChild(renderMessageNode(m));
     msgs.appendChild(frag);
+
+    // important: initial load should NOT reorder dialogs (only real new messages reorder)
+    if (items.length) {
+      const last = items[items.length - 1];
+      updateDialogPreviewFromMessage(currentChatId, last, { moveToTop: false });
+    }
   }
 
   updateReadMarks();
@@ -1932,7 +2353,6 @@ async function sendMessage() {
   text.value = "";
   saveDraftForCurrentChat();
 
-  // отправили — можно спрятать подсказку
   assistantHideBubble();
   assistantLastSentDraft = "";
   assistantLastSuggestion = "";
@@ -1973,6 +2393,10 @@ async function sendMessage() {
     if (msg && msg.id && !document.querySelector(`.msg[data-message-id="${msg.id}"]`)) {
       renderMessage(msg);
     }
+
+    // ✅ sending should move dialog to top
+    if (msg) updateDialogPreviewFromMessage(currentChatId, msg, { moveToTop: true });
+
     await maybeMarkRead();
   } catch (_) {}
 
@@ -2044,13 +2468,8 @@ function bindUI() {
     updateSendVisibility();
   });
 
-  // =========================
-  // Assistant bindings
-  // =========================
-
   _assistantPaintToggle();
 
-  // click on track
   if (assistantTrack) {
     assistantTrack.addEventListener("click", () => assistantToggleEnabled());
     assistantTrack.addEventListener("keydown", (e) => {
@@ -2061,7 +2480,6 @@ function bindUI() {
     });
   }
 
-  // checkbox (если кто-то кликает по нему)
   if (assistantToggle) {
     assistantToggle.addEventListener("change", () => {
       assistantSetEnabled(!!assistantToggle.checked);
@@ -2104,8 +2522,6 @@ function bindUI() {
       saveDraftForCurrentChat();
       updateSendVisibility();
       sendTypingStartDebounced();
-
-      // GPT assistant debounce
       assistantScheduleDebounced();
     });
 
@@ -2154,13 +2570,13 @@ function installRuntimeDither() {
     const data = img.data;
 
     for (let i = 0; i < data.length; i += 4) {
-      const n = (Math.random() * 36 - 18) | 0; // -18..+18
+      const n = (Math.random() * 36 - 18) | 0;
       const v = 128 + n;
 
       data[i + 0] = v;
       data[i + 1] = v;
       data[i + 2] = v;
-      data[i + 3] = 28; // 0..255
+      data[i + 3] = 28;
     }
     ctx.putImageData(img, 0, 0);
 
@@ -2184,6 +2600,7 @@ function installRuntimeDither() {
 
 (async () => {
   installRuntimeDither();
+  installDialogsStyle();
 
   loadPersistedUnread();
   loadPersistedDrafts();
@@ -2199,7 +2616,7 @@ function installRuntimeDither() {
     await loadMe();
     if (me) {
       connectWS();
-      await loadDialogs(); // после loadDialogs() мы подпишемся на presence всех чатов
+      await loadDialogs();
     } else {
       logout();
     }
