@@ -12,3 +12,5 @@ python-multipart
 
 alembic
 psycopg2-binary
+
+httpx>=0.27

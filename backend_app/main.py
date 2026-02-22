@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from backend_app.db import engine
 from backend_app.models import Base
 from backend_app.ws import router as ws_router
-from backend_app.routers import auth, users, chats, files
+from backend_app.routers import auth, users, chats, files, assistant  # ✅ добавили assistant
 
 app = FastAPI(title="Telegram MVP")
 
@@ -30,6 +30,10 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(chats.router, prefix="/chats", tags=["chats"])
 app.include_router(files.router, prefix="/files", tags=["files"])
+
+# ✅ GPT assistant endpoint
+app.include_router(assistant.router, prefix="/assistant", tags=["assistant"])
+
 app.include_router(ws_router)  # /ws
 
 # --- FRONTEND ---

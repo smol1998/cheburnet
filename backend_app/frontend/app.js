@@ -49,6 +49,25 @@ let _isTyping = false;
 // Poll capabilities
 let _supportsAfterId = null; // unknown until tested
 
+// =========================
+// GPT Assistant state
+// =========================
+const LS_ASSISTANT = "assistant_enabled_v1";
+let assistantEnabled = localStorage.getItem(LS_ASSISTANT) === "1";
+let assistantDebounceTimer = null;
+let assistantBusy = false;
+let assistantLastSentDraft = "";
+let assistantLastAtMs = 0;
+let assistantAbortCtrl = null;
+let assistantLastSuggestion = "";
+
+// front-side throttles (to avoid token burn even before server rate-limit)
+const ASSISTANT_DEBOUNCE_MS = 1200;
+const ASSISTANT_MIN_INTERVAL_MS = 1200;
+const ASSISTANT_MAX_DRAFT_CHARS = 1200;
+const ASSISTANT_MAX_CONTEXT_MESSAGES = 14;
+const ASSISTANT_MAX_MSG_CHARS = 800;
+
 /* =========================
    DOM
    ========================= */
@@ -73,6 +92,7 @@ const profileAvatarInput = document.getElementById("profileAvatarInput");
 const btnSaveProfile = document.getElementById("btnSaveProfile");
 const btnLogout = document.getElementById("btnLogout");
 
+// legacy (index.html теперь без mePill) — код безопасно переживёт отсутствие
 const mePill = document.getElementById("mePill");
 
 const chatTitle = document.getElementById("chatTitle");
@@ -112,6 +132,19 @@ const sfRemove = document.getElementById("sfRemove");
 const authModeLogin = document.getElementById("authModeLogin");
 const authModeRegister = document.getElementById("authModeRegister");
 const registerFields = document.getElementById("registerFields");
+
+// =========================
+// Assistant DOM
+// =========================
+const assistantToggle = document.getElementById("assistantToggle");
+const assistantTrack = document.getElementById("assistantTrack");
+const assistantState = document.getElementById("assistantState");
+
+const assistantBubble = document.getElementById("assistantBubble");
+const assistantBubbleText = document.getElementById("assistantBubbleText");
+const assistantInsert = document.getElementById("assistantInsert");
+const assistantMore = document.getElementById("assistantMore");
+const assistantClose = document.getElementById("assistantClose");
 
 /* =========================
    Viewport stability (mobile keyboard)
@@ -245,6 +278,172 @@ function mk(tag, props = {}, children = []) {
     else el.appendChild(c);
   }
   return el;
+}
+
+function _clip(s, n) {
+  const x = String(s || "");
+  if (!x) return "";
+  return x.length <= n ? x : x.slice(0, n);
+}
+
+/* =========================
+   Assistant (GPT helper)
+   ========================= */
+
+function _assistantPaintToggle() {
+  if (assistantToggle) assistantToggle.checked = !!assistantEnabled;
+
+  if (assistantTrack) {
+    assistantTrack.classList.toggle("on", !!assistantEnabled);
+    assistantTrack.setAttribute("aria-checked", assistantEnabled ? "true" : "false");
+  }
+
+  // если выключили — закрываем bubble и отменяем запросы
+  if (!assistantEnabled) {
+    assistantHideBubble();
+    assistantCancelInFlight();
+  }
+}
+
+function assistantSetEnabled(v) {
+  assistantEnabled = !!v;
+  localStorage.setItem(LS_ASSISTANT, assistantEnabled ? "1" : "0");
+  _assistantPaintToggle();
+}
+
+function assistantToggleEnabled() {
+  if (!token) {
+    assistantSetEnabled(false);
+    alert("Login first");
+    return;
+  }
+  assistantSetEnabled(!assistantEnabled);
+}
+
+function assistantShowBubble(txt) {
+  if (!assistantBubble || !assistantBubbleText) return;
+  assistantBubbleText.textContent = txt || "";
+  assistantBubble.classList.add("show");
+}
+
+function assistantHideBubble() {
+  if (!assistantBubble) return;
+  assistantBubble.classList.remove("show");
+}
+
+function assistantCancelInFlight() {
+  if (assistantAbortCtrl) {
+    try { assistantAbortCtrl.abort(); } catch (_) {}
+  }
+  assistantAbortCtrl = null;
+  assistantBusy = false;
+}
+
+function assistantCollectContext() {
+  // берём последние сообщения из DOM
+  if (!msgs) return [];
+
+  const nodes = Array.from(msgs.querySelectorAll(".msg[data-message-id]"));
+  if (!nodes.length) return [];
+
+  const slice = nodes.slice(Math.max(0, nodes.length - ASSISTANT_MAX_CONTEXT_MESSAGES));
+
+  const out = [];
+  for (const n of slice) {
+    const senderIdStr = n.getAttribute("data-sender-id") || n.dataset.senderId || "";
+    const senderId = parseInt(senderIdStr || "0", 10);
+
+    let sender = "other";
+    if (me && senderId && senderId === me.id) sender = "me";
+
+    const tNode = n.querySelector(".msgText");
+    const t = tNode ? (tNode.textContent || "") : "";
+    const clipped = _clip(t.trim(), ASSISTANT_MAX_MSG_CHARS);
+    if (!clipped) continue;
+
+    out.push({ sender, text: clipped });
+  }
+
+  return out;
+}
+
+async function assistantRequestSuggestion(reason = "idle") {
+  if (!assistantEnabled) return;
+  if (!token || !me) return;
+  if (!currentChatId) return;
+
+  const draft = _clip((text && text.value ? text.value : "").trim(), ASSISTANT_MAX_DRAFT_CHARS);
+  if (!draft) return;
+
+  const now = Date.now();
+  if (now - assistantLastAtMs < ASSISTANT_MIN_INTERVAL_MS) return;
+
+  // чтобы не стрелять на один и тот же текст
+  if (draft === assistantLastSentDraft && reason !== "regen") return;
+
+  // если уже заняты — не параллелим (лучше отменить и перезапросить)
+  if (assistantBusy) {
+    assistantCancelInFlight();
+  }
+
+  assistantBusy = true;
+  assistantLastAtMs = now;
+  assistantLastSentDraft = draft;
+
+  const context = assistantCollectContext();
+
+  assistantAbortCtrl = new AbortController();
+  const ctrl = assistantAbortCtrl;
+
+  try {
+    const r = await fetch(API + "/assistant/suggest", {
+      method: "POST",
+      headers: authHeadersJson(),
+      body: JSON.stringify({
+        chat_id: currentChatId,
+        reason,
+        draft,
+        messages: context,
+      }),
+      signal: ctrl.signal,
+    });
+
+    if (!r.ok) {
+      // 429 / 502 / etc — просто молча
+      assistantBusy = false;
+      return;
+    }
+
+    const j = await r.json();
+    const sug = (j && j.suggestion) ? String(j.suggestion).trim() : "";
+    if (!sug) {
+      assistantBusy = false;
+      return;
+    }
+
+    assistantLastSuggestion = sug;
+    assistantShowBubble(sug);
+  } catch (_) {
+    // aborted / network
+  } finally {
+    if (assistantAbortCtrl === ctrl) assistantAbortCtrl = null;
+    assistantBusy = false;
+  }
+}
+
+function assistantScheduleDebounced() {
+  if (!assistantEnabled) return;
+  if (!token || !me) return;
+  if (!currentChatId) return;
+
+  // не показываем/не генерим если пользователь прикрепил файл и нет текста
+  const v = (text && text.value ? text.value.trim() : "");
+  if (!v) return;
+
+  if (assistantDebounceTimer) clearTimeout(assistantDebounceTimer);
+  assistantDebounceTimer = setTimeout(() => {
+    assistantRequestSuggestion("idle");
+  }, ASSISTANT_DEBOUNCE_MS);
 }
 
 /* =========================
@@ -514,7 +713,7 @@ function showSelectedFileUI(f) {
 }
 
 /* =========================
-   Mini pill
+   Mini pill (legacy)
    ========================= */
 
 function renderMiniMePill() {
@@ -840,6 +1039,9 @@ function logout() {
   renderMiniMePill();
 
   clearSelectedFileUI();
+
+  // assistant off on logout
+  assistantSetEnabled(false);
 
   setTab("account");
   setAuthMode("login");
@@ -1475,6 +1677,11 @@ async function openChat(chatId, otherId, title) {
   setUnread(cid, false);
   restoreDraftForChat(cid);
 
+  // смена чата: прячем подсказку
+  assistantHideBubble();
+  assistantLastSentDraft = "";
+  assistantLastSuggestion = "";
+
   const other = otherByChatId.get(cid) || { id: otherId, username: title, avatar_url: null, avatar_file_id: null };
   setChatHeaderUser(other);
 
@@ -1649,6 +1856,11 @@ async function sendMessage() {
   text.value = "";
   saveDraftForCurrentChat();
 
+  // отправили — можно спрятать подсказку
+  assistantHideBubble();
+  assistantLastSentDraft = "";
+  assistantLastSuggestion = "";
+
   isSending = true;
   disableSend(true);
 
@@ -1756,17 +1968,69 @@ function bindUI() {
     updateSendVisibility();
   });
 
+  // =========================
+  // Assistant bindings
+  // =========================
+
+  _assistantPaintToggle();
+
+  // click on track
+  if (assistantTrack) {
+    assistantTrack.addEventListener("click", () => assistantToggleEnabled());
+    assistantTrack.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        assistantToggleEnabled();
+      }
+    });
+  }
+
+  // checkbox (если кто-то кликает по нему)
+  if (assistantToggle) {
+    assistantToggle.addEventListener("change", () => {
+      assistantSetEnabled(!!assistantToggle.checked);
+    });
+  }
+
+  if (assistantInsert) {
+    assistantInsert.addEventListener("click", () => {
+      if (!text) return;
+      if (!assistantLastSuggestion) return;
+      text.value = assistantLastSuggestion;
+      saveDraftForCurrentChat();
+      updateSendVisibility();
+      assistantHideBubble();
+      text.focus();
+    });
+  }
+
+  if (assistantMore) {
+    assistantMore.addEventListener("click", () => {
+      assistantRequestSuggestion("regen");
+    });
+  }
+
+  if (assistantClose) {
+    assistantClose.addEventListener("click", () => {
+      assistantHideBubble();
+    });
+  }
+
   if (text) {
     text.addEventListener("compositionstart", () => { isComposing = true; });
     text.addEventListener("compositionend", () => {
       isComposing = false;
       saveDraftForCurrentChat();
+      if (assistantEnabled) assistantScheduleDebounced();
     });
 
     text.addEventListener("input", () => {
       saveDraftForCurrentChat();
       updateSendVisibility();
       sendTypingStartDebounced();
+
+      // GPT assistant debounce
+      assistantScheduleDebounced();
     });
 
     text.addEventListener("keydown", (e) => {
@@ -1869,4 +2133,6 @@ function installRuntimeDither() {
 
   setViewportVars();
   updateSendVisibility();
+
+  _assistantPaintToggle();
 })();
