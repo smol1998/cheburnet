@@ -2,16 +2,7 @@
    CONFIG
    ========================= */
 
-// Base API prefix. If backend served on same origin, leave "".
 const API = "";
-
-/**
- * Files auth mode:
- * - "query_token"  -> keep current behavior: /files/:id?token=...
- * - "plain"        -> do not append token. Use only if backend supports public or cookie auth for /files/*
- *
- * IMPORTANT: For private files, professional solution is signed URLs or httpOnly cookie auth.
- */
 const FILES_AUTH_MODE = "query_token";
 
 /* =========================
@@ -909,7 +900,6 @@ function connectWS() {
 
   ws.onopen = () => {
     wsRetry = 0;
-    // subscribe current chat if open
     if (currentChatId) wsSend({ type: "presence:subscribe", chat_id: currentChatId });
   };
 
@@ -1010,13 +1000,11 @@ async function pollOnce() {
   const url = new URL(API + `/chats/dm/${currentChatId}/messages`, location.origin);
   url.searchParams.set("limit", "50");
 
-  // Try after_id if we already know it is supported
   if (_supportsAfterId === true) url.searchParams.set("after_id", String(lastId));
 
   try {
     const r = await fetch(url.toString(), { headers: { Authorization: "Bearer " + token } });
 
-    // If server rejects after_id, fallback and remember
     if (!r.ok) {
       if (_supportsAfterId === true) {
         _supportsAfterId = false;
@@ -1033,7 +1021,6 @@ async function pollOnce() {
     for (const m of items) {
       if (!m?.id) continue;
       if (document.querySelector(`.msg[data-message-id="${m.id}"]`)) continue;
-      // If after_id is not supported, items may include older messages too; only render new ones
       if (m.id <= lastId) continue;
 
       if (isDialogVisible(currentChatId)) {
@@ -1049,7 +1036,6 @@ async function pollOnce() {
       _supportsAfterId = false;
     }
 
-    // Adaptive backoff
     if (appended === 0) {
       _pollNoNewCount++;
       if (_pollNoNewCount >= 3) {
@@ -1827,8 +1813,6 @@ function installRuntimeDither() {
     const img = ctx.createImageData(size, size);
     const data = img.data;
 
-    // Centered noise around mid-gray -> ломает ступени без заметного “зерна”
-    // alpha низкая, дальше CSS ещё раз блюрит/контрастит
     for (let i = 0; i < data.length; i += 4) {
       const n = (Math.random() * 36 - 18) | 0; // -18..+18
       const v = 128 + n;
@@ -1840,7 +1824,6 @@ function installRuntimeDither() {
     }
     ctx.putImageData(img, 0, 0);
 
-    // Смягчим noise ещё до CSS (чтобы точно не было “пикселей”)
     const c2 = document.createElement("canvas");
     c2.width = size;
     c2.height = size;
@@ -1852,9 +1835,7 @@ function installRuntimeDither() {
 
     const url = c2.toDataURL("image/png");
     document.documentElement.style.setProperty("--ditherRuntime", `url("${url}")`);
-  } catch (_) {
-    // fallback: CSS uses --ditherPng
-  }
+  } catch (_) {}
 }
 
 /* =========================
@@ -1862,7 +1843,7 @@ function installRuntimeDither() {
    ========================= */
 
 (async () => {
-  installRuntimeDither(); // <-- важно: до первой отрисовки
+  installRuntimeDither();
 
   loadPersistedUnread();
   loadPersistedDrafts();

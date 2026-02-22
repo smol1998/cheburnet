@@ -727,10 +727,10 @@
     /* ===== NEW: iOS-like message bubbles ===== */
     .msg{
       max-width:78%;
-      padding: 10px 12px;
+      padding: 9px 11px;
       border: 1px solid rgba(255,255,255,.10);
       background: rgba(255,255,255,.045);
-      line-height: 1.35;
+      line-height: 1.32;
       word-break: break-word;
 
       /* iOS-ish geometry: softer + asymmetric corners */
@@ -791,6 +791,10 @@
     }
     .attachment img{ height:auto; }
 
+    /* =========================
+       FIX: composer must "stretch" from bottom and lift inner controls
+       ========================= */
+
     .composer{
       padding:10px 12px;
       border-top:1px solid rgba(255,255,255,.10);
@@ -805,16 +809,20 @@
       z-index:3;
 
       flex: 0 0 auto;
-      transition: transform .24s ease, box-shadow .24s ease, border-color .24s ease;
-      will-change: transform;
+
+      /* IMPORTANT: animate padding-bottom so inner controls move up */
+      transition: padding-bottom .24s ease, box-shadow .24s ease, border-color .24s ease;
+      will-change: padding-bottom;
     }
+
     .chat.kbdFocus .composer{
-      transform: translateY(calc(-1 * var(--lift)));
+      padding-bottom: calc(10px + var(--lift));
       box-shadow: 0 22px 60px rgba(0,0,0,.50);
       border-top-color: rgba(255,255,255,.14);
     }
+
     .chat.kbdFocus .messages{
-      padding-bottom: calc(14px + var(--lift));
+      padding-bottom: 14px;
     }
 
     .composerLeft{ min-width:0; }
@@ -1282,6 +1290,6 @@
   </div>
 
   <!-- важно: твой JS -->
-  <script src="/static/app.js?v=6002"></script>
+  <script src="/static/app.js?v=6008"></script>
 </body>
 </html>
