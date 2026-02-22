@@ -50,8 +50,61 @@ let _isTyping = false;
 let _supportsAfterId = null; // unknown until tested
 
 // =========================
-// GPT Assistant state
+// Presence (dialogs realtime)
 // =========================
+const presenceSubscribedChatIds = new Set();     // what we already subscribed on this WS session
+const presenceOnlineByChatId = new Map();        // last known online state per chat_id (from WS)
+
+/**
+ * Paint dot in dialogs list immediately (no reload required)
+ */
+function paintDialogPresenceDot(chatId, online) {
+  const cid = normChatId(chatId);
+  if (!cid) return;
+
+  // store last known state (used when rerendering list)
+  presenceOnlineByChatId.set(cid, !!online);
+
+  const row = document.querySelector(`.item[data-chatid="${cid}"]`);
+  if (!row) return;
+
+  const dot = row.querySelector(".dialogRow .dot");
+  if (!dot) return;
+
+  dot.classList.toggle("online", !!online);
+}
+
+/**
+ * Subscribe presence for a chat (dedup)
+ */
+function presenceSubscribe(chatId) {
+  const cid = normChatId(chatId);
+  if (!cid) return;
+  if (!ws || ws.readyState !== 1) return;
+
+  if (presenceSubscribedChatIds.has(cid)) return;
+  presenceSubscribedChatIds.add(cid);
+  wsSend({ type: "presence:subscribe", chat_id: cid });
+}
+
+/**
+ * Subscribe to presence for all chats we currently know + opened chat
+ */
+function presenceSyncSubscriptions() {
+  if (!ws || ws.readyState !== 1) return;
+
+  // subscribe to all chats shown in list
+  for (const cid of otherByChatId.keys()) {
+    presenceSubscribe(cid);
+  }
+
+  // plus current chat (in case list not loaded yet)
+  if (currentChatId) presenceSubscribe(currentChatId);
+}
+
+/* =========================
+   GPT Assistant state
+   ========================= */
 const LS_ASSISTANT = "assistant_enabled_v1";
 let assistantEnabled = localStorage.getItem(LS_ASSISTANT) === "1";
 let assistantDebounceTimer = null;
@@ -1035,6 +1088,10 @@ function logout() {
   try { if (ws) ws.close(); } catch (_) {}
   ws = null;
 
+  // reset presence caches
+  presenceSubscribedChatIds.clear();
+  presenceOnlineByChatId.clear();
+
   setAccountMode(false);
   renderMiniMePill();
 
@@ -1095,6 +1152,9 @@ function connectWS() {
   try { if (ws) ws.close(); } catch (_) {}
   ws = null;
 
+  // new WS session => reset subscription dedup
+  presenceSubscribedChatIds.clear();
+
   if (!token) return;
 
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -1102,7 +1162,9 @@ function connectWS() {
 
   ws.onopen = () => {
     wsRetry = 0;
-    if (currentChatId) wsSend({ type: "presence:subscribe", chat_id: currentChatId });
+
+    // subscribe to all known chats + current (realtime dots in dialogs)
+    presenceSyncSubscriptions();
   };
 
   ws.onclose = () => {
@@ -1139,7 +1201,13 @@ function connectWS() {
 
     if (data.type === "presence:state") {
       const cid = normChatId(data.chat_id);
-      if (cid && cid === currentChatId && data.user_id === currentOtherId) {
+      if (!cid) return;
+
+      // ✅ always update dialogs dot immediately (no reload)
+      paintDialogPresenceDot(cid, !!data.online);
+
+      // ✅ update header if it’s current chat + current other user
+      if (cid === currentChatId && data.user_id === currentOtherId) {
         if (isDialogVisible(currentChatId)) setOnlineUI(!!data.online);
       }
     }
@@ -1366,7 +1434,14 @@ async function loadDialogs() {
   for (const d of (list || [])) {
     const cid = normChatId(d.chat_id);
     const other = d.other || {};
-    const online = !!d.other_online;
+
+    // base from server list
+    let online = !!d.other_online;
+
+    // ✅ if we already have fresher presence from WS, use it
+    if (cid && presenceOnlineByChatId.has(cid)) {
+      online = !!presenceOnlineByChatId.get(cid);
+    }
 
     if (cid && other) otherByChatId.set(cid, other);
 
@@ -1399,6 +1474,9 @@ async function loadDialogs() {
   for (const [cid, v] of unreadByChatId.entries()) {
     paintUnreadBadge(cid, v === true);
   }
+
+  // ✅ after rendering list: ensure presence subscriptions so dots update instantly
+  presenceSyncSubscriptions();
 }
 
 /* =========================
@@ -1660,10 +1738,7 @@ async function openChat(chatId, otherId, title) {
 
   saveDraftForCurrentChat();
 
-  if (currentChatId && currentChatId !== cid) {
-    wsSend({ type: "presence:unsubscribe", chat_id: currentChatId });
-  }
-
+  // (не делаем unsubscribe — пусть presence обновляет весь список)
   currentChatId = cid;
   currentOtherId = otherId;
   nextBeforeId = null;
@@ -1690,7 +1765,8 @@ async function openChat(chatId, otherId, title) {
     msgs.appendChild(mk("div", { class: "loading", text: "Loading…" }));
   }
 
-  wsSend({ type: "presence:subscribe", chat_id: cid });
+  // ensure presence subscription for this chat
+  presenceSubscribe(cid);
 
   await loadMessagesPage();
 
@@ -2123,7 +2199,7 @@ function installRuntimeDither() {
     await loadMe();
     if (me) {
       connectWS();
-      await loadDialogs();
+      await loadDialogs(); // после loadDialogs() мы подпишемся на presence всех чатов
     } else {
       logout();
     }
