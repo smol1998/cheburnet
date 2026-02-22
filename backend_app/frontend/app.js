@@ -61,7 +61,7 @@ let assistantLastAtMs = 0;
 let assistantAbortCtrl = null;
 let assistantLastSuggestion = "";
 
-// front-side throttles (to avoid token burn even before server rate-limit)
+// front-side throttles
 const ASSISTANT_DEBOUNCE_MS = 1200;
 const ASSISTANT_MIN_INTERVAL_MS = 1200;
 const ASSISTANT_MAX_DRAFT_CHARS = 1200;
@@ -213,10 +213,6 @@ function authHeadersJson() {
   return { Authorization: "Bearer " + token, "Content-Type": "application/json" };
 }
 
-function escapeHtml(s) {
-  return (s || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
 async function readError(r) {
   let txt = "";
   try { txt = await r.text(); } catch (_) {}
@@ -270,7 +266,7 @@ function mk(tag, props = {}, children = []) {
   for (const [k, v] of Object.entries(props || {})) {
     if (k === "class") el.className = v;
     else if (k === "text") el.textContent = v;
-    else if (k === "html") el.innerHTML = v; // only for trusted static html
+    else if (k === "html") el.innerHTML = v;
     else if (k === "dataset" && v && typeof v === "object") {
       for (const [dk, dv] of Object.entries(v)) el.dataset[dk] = String(dv);
     } else if (k.startsWith("on") && typeof v === "function") {
@@ -304,6 +300,51 @@ function _sleep(ms) {
 }
 
 /* =========================
+   ✅ PER-USER persistence keys
+   ========================= */
+
+const LS_UNREAD_BASE = "unreadByChatId_v2";
+const LS_DRAFTS_BASE = "draftsByChatId_v2";
+
+function _persistScope() {
+  // different accounts => different keys
+  return me && me.id ? `u${me.id}` : "anon";
+}
+
+function _keyUnread() { return `${LS_UNREAD_BASE}_${_persistScope()}`; }
+function _keyDrafts() { return `${LS_DRAFTS_BASE}_${_persistScope()}`; }
+
+/* =========================
+   ✅ Reset state on auth change
+   ========================= */
+
+function resetDialogsStateAndUI() {
+  // timers
+  stopDialogsLive();
+  if (dialogsReloadTimer) { clearTimeout(dialogsReloadTimer); dialogsReloadTimer = null; }
+  dialogsReloadInFlight = false;
+
+  // current open chat pointers (do not close chat panel, just reset list consistency)
+  currentChatId = null;
+  currentOtherId = null;
+
+  // in-memory maps
+  otherByChatId.clear();
+  dialogMetaByChatId.clear();
+  lastMsgFetchInFlight.clear();
+
+  // IMPORTANT: per-user data should not leak
+  unreadByChatId.clear();
+  draftsByChatId.clear();
+
+  // UI list: clear fully and allow re-init
+  if (dialogs) {
+    clearNode(dialogs);
+    delete dialogs.dataset.inited;
+  }
+}
+
+/* =========================
    Assistant (GPT helper)
    ========================= */
 
@@ -315,7 +356,6 @@ function _assistantPaintToggle() {
     assistantTrack.setAttribute("aria-checked", assistantEnabled ? "true" : "false");
   }
 
-  // если выключили — закрываем bubble и отменяем запросы
   if (!assistantEnabled) {
     assistantHideBubble();
     assistantCancelInFlight();
@@ -357,7 +397,6 @@ function assistantCancelInFlight() {
 }
 
 function assistantCollectContext() {
-  // берём последние сообщения из DOM
   if (!msgs) return [];
 
   const nodes = Array.from(msgs.querySelectorAll(".msg[data-message-id]"));
@@ -395,10 +434,8 @@ async function assistantRequestSuggestion(reason = "idle") {
   const now = Date.now();
   if (now - assistantLastAtMs < ASSISTANT_MIN_INTERVAL_MS) return;
 
-  // чтобы не стрелять на один и тот же текст
   if (draft === assistantLastSentDraft && reason !== "regen") return;
 
-  // если уже заняты — не параллелим (лучше отменить и перезапросить)
   if (assistantBusy) {
     assistantCancelInFlight();
   }
@@ -440,7 +477,6 @@ async function assistantRequestSuggestion(reason = "idle") {
     assistantLastSuggestion = sug;
     assistantShowBubble(sug);
   } catch (_) {
-    // aborted / network
   } finally {
     if (assistantAbortCtrl === ctrl) assistantAbortCtrl = null;
     assistantBusy = false;
@@ -604,7 +640,6 @@ function scheduleDialogsReload() {
     try {
       await loadDialogs();
     } catch (_) {
-      // ignore
     } finally {
       dialogsReloadInFlight = false;
     }
@@ -788,7 +823,7 @@ function setOnlineUI(on) {
 
 function setTypingUI(on) {
   _isTyping = !!on;
-  if (typingText) typingText.textContent = ""; // legacy placeholder
+  if (typingText) typingText.textContent = "";
   _paintHeaderStatus();
 }
 
@@ -848,15 +883,13 @@ function paintProfile() {
 }
 
 /* =========================
-   Persist unread + drafts
+   Persist unread + drafts (PER USER)
    ========================= */
 
-const LS_UNREAD = "unreadByChatId_v1";
-const LS_DRAFTS = "draftsByChatId_v1";
-
 function loadPersistedUnread() {
+  unreadByChatId.clear();
   try {
-    const raw = localStorage.getItem(LS_UNREAD);
+    const raw = localStorage.getItem(_keyUnread());
     if (!raw) return;
     const obj = JSON.parse(raw);
     if (!obj || typeof obj !== "object") return;
@@ -871,7 +904,29 @@ function savePersistedUnread() {
   try {
     const obj = {};
     for (const [cid, v] of unreadByChatId.entries()) obj[String(cid)] = !!v;
-    localStorage.setItem(LS_UNREAD, JSON.stringify(obj));
+    localStorage.setItem(_keyUnread(), JSON.stringify(obj));
+  } catch (_) {}
+}
+
+function loadPersistedDrafts() {
+  draftsByChatId.clear();
+  try {
+    const raw = localStorage.getItem(_keyDrafts());
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== "object") return;
+    for (const [k, v] of Object.entries(obj)) {
+      const cid = normChatId(k);
+      if (cid && typeof v === "string") draftsByChatId.set(cid, v);
+    }
+  } catch (_) {}
+}
+
+function savePersistedDrafts() {
+  try {
+    const obj = {};
+    for (const [cid, v] of draftsByChatId.entries()) obj[String(cid)] = String(v || "");
+    localStorage.setItem(_keyDrafts(), JSON.stringify(obj));
   } catch (_) {}
 }
 
@@ -895,31 +950,9 @@ function setUnread(chatId, val) {
   if (!cid) return;
   unreadByChatId.set(cid, !!val);
   savePersistedUnread();
-
   paintUnreadBadge(cid, !!val);
 
   if (!!val && !hasDialogRowInDOM(cid)) scheduleDialogsReload();
-}
-
-function loadPersistedDrafts() {
-  try {
-    const raw = localStorage.getItem(LS_DRAFTS);
-    if (!raw) return;
-    const obj = JSON.parse(raw);
-    if (!obj || typeof obj !== "object") return;
-    for (const [k, v] of Object.entries(obj)) {
-      const cid = normChatId(k);
-      if (cid && typeof v === "string") draftsByChatId.set(cid, v);
-    }
-  } catch (_) {}
-}
-
-function savePersistedDrafts() {
-  try {
-    const obj = {};
-    for (const [cid, v] of draftsByChatId.entries()) obj[String(cid)] = String(v || "");
-    localStorage.setItem(LS_DRAFTS, JSON.stringify(obj));
-  } catch (_) {}
 }
 
 function saveDraftForCurrentChat() {
@@ -990,6 +1023,12 @@ async function register() {
     localStorage.setItem("token", token);
 
     await loadMe();
+
+    // ✅ FIX: full reset after auth change (prevents чужие диалоги)
+    resetDialogsStateAndUI();
+    loadPersistedUnread();
+    loadPersistedDrafts();
+
     connectWS();
     await loadDialogs();
 
@@ -1019,6 +1058,12 @@ async function login() {
   localStorage.setItem("token", token);
 
   await loadMe();
+
+  // ✅ FIX: full reset after auth change (prevents чужие диалоги)
+  resetDialogsStateAndUI();
+  loadPersistedUnread();
+  loadPersistedDrafts();
+
   connectWS();
   await loadDialogs();
 
@@ -1057,7 +1102,8 @@ function logout() {
 
   assistantSetEnabled(false);
 
-  stopDialogsLive();
+  // ✅ reset all dialogs state/UI so nothing leaks
+  resetDialogsStateAndUI();
 
   setTab("account");
   setAuthMode("login");
@@ -1140,7 +1186,6 @@ function connectWS() {
 
       const senderId = msg?.sender_id;
 
-      // ✅ move dialog to top ONLY because of real new message
       updateDialogPreviewFromMessage(cid, msg, { moveToTop: true });
 
       if (isDialogVisible(cid)) {
@@ -1159,12 +1204,10 @@ function connectWS() {
     if (data.type === "presence:state") {
       const cid = normChatId(data.chat_id);
 
-      // header: only for opened chat
       if (cid && cid === currentChatId && data.user_id === currentOtherId) {
         if (isDialogVisible(currentChatId)) setOnlineUI(!!data.online);
       }
 
-      // dialogs list: update online dot (no re-render, no reorder)
       if (cid && data.user_id) {
         const meta = dialogMetaByChatId.get(cid);
         if (meta && meta.other && meta.other.id === data.user_id) {
@@ -1259,8 +1302,6 @@ async function pollOnce() {
       if (isDialogVisible(currentChatId)) {
         renderMessage(m);
         appended++;
-
-        // ✅ treat as "new message arrived" -> move dialog to top
         updateDialogPreviewFromMessage(currentChatId, m, { moveToTop: true });
       }
     }
@@ -1492,7 +1533,6 @@ function buildDialogPreviewFromMsg(m) {
 
 function _avatarKeyForUser(uobj) {
   if (!uobj) return "";
-  // stable key: if avatar changes, avatar_file_id changes
   if (uobj.avatar_file_id) return `file:${uobj.avatar_file_id}`;
   if (uobj.avatar_url) return `url:${uobj.avatar_url}`;
   return "";
@@ -1514,8 +1554,6 @@ function _renderAvatarIntoWrap(wrap, userObj) {
   } else {
     wrap.appendChild(mk("span", { text: "👤", style: "opacity:.55;font-weight:900;" }));
   }
-
-  // online dot is appended by caller
 }
 
 function renderDialogRowSkeleton({ chatId, other, online, lastPreview, hasUnread }) {
@@ -1562,7 +1600,6 @@ function renderDialogRowSkeleton({ chatId, other, online, lastPreview, hasUnread
 
   row.addEventListener("click", () => openChat(cid, other.id, other.username || ""));
 
-  // set attachment icon visibility
   _paintDialogPreviewBits(row, lastPreview);
 
   return row;
@@ -1595,14 +1632,11 @@ function _updateDialogRowInPlace({ cid, meta }) {
   const row = dialogs?.querySelector(`.item[data-chatid="${cid}"]`);
   if (!row) return;
 
-  // online
   paintDialogOnline(cid, !!meta.online);
 
-  // name (without @)
   const nameEl = row.querySelector(".dlgName");
   if (nameEl) nameEl.textContent = _safeNameNoAt(meta.other?.username);
 
-  // avatar: update ONLY if key changed (fixes constant reload)
   const newKey = _avatarKeyForUser(meta.other);
   const oldKey = row.dataset.avatarkey || "";
   if (newKey !== oldKey) {
@@ -1616,17 +1650,14 @@ function _updateDialogRowInPlace({ cid, meta }) {
     }
   }
 
-  // preview/time/icon/prefix
   const lp = meta.lastPreview || { time: "", text: "—", isMe: false, kind: null };
   _paintDialogPreviewBits(row, lp);
 
-  // unread badge
   const shouldUnread = unreadByChatId.get(cid) === true;
   const badge = row.querySelector(".unreadBadge");
   if (shouldUnread && !badge) row.appendChild(mk("span", { class: "unreadBadge", text: "NEW" }));
   if (!shouldUnread && badge) badge.remove();
 
-  // active state
   row.classList.toggle("active", currentChatId === cid);
 }
 
@@ -1646,7 +1677,6 @@ function updateDialogPreviewFromMessage(chatId, msg, { moveToTop = true } = {}) 
   const prevMsgId = meta.lastMsg?.id || 0;
   const nextMsgId = msg?.id || 0;
 
-  // prevent older hydration from overriding newer
   if (nextMsgId && prevMsgId && nextMsgId < prevMsgId) {
     return;
   }
@@ -1654,12 +1684,10 @@ function updateDialogPreviewFromMessage(chatId, msg, { moveToTop = true } = {}) 
   meta.lastMsg = msg;
   meta.lastPreview = buildDialogPreviewFromMsg(msg);
   meta.updatedAt = Date.now();
-
   if (!meta.other) meta.other = otherByChatId.get(cid) || meta.other || null;
 
   dialogMetaByChatId.set(cid, meta);
 
-  // ensure row exists
   const rowExists = hasDialogRowInDOM(cid);
   if (!rowExists && dialogs) {
     const other = meta.other || { id: 0, username: "—" };
@@ -1708,7 +1736,6 @@ async function fetchLastMessageForDialog(chatId) {
 }
 
 async function hydrateDialogsLastMessagesStable(list) {
-  // fetch previews but DO NOT move dialogs (fix: jumping order)
   const MAX_CONC = 4;
   const queue = (list || []).map((d) => normChatId(d.chat_id)).filter(Boolean);
 
@@ -1719,12 +1746,10 @@ async function hydrateDialogsLastMessagesStable(list) {
       const meta = dialogMetaByChatId.get(cid);
       if (!meta) continue;
 
-      // if already has preview, don't spam
       if (meta.lastMsg && meta.updatedAt && (Date.now() - meta.updatedAt < 20000)) continue;
 
       const last = await fetchLastMessageForDialog(cid);
       if (last) {
-        // update WITHOUT moving to top
         updateDialogPreviewFromMessage(cid, last, { moveToTop: false });
       }
 
@@ -1743,7 +1768,6 @@ async function refreshDialogsPresenceOnly() {
 
   const list = await r.json();
 
-  // update meta + UI in-place, no clearing, no reordering
   for (const d of (list || [])) {
     const cid = normChatId(d.chat_id);
     if (!cid) continue;
@@ -1760,7 +1784,6 @@ async function refreshDialogsPresenceOnly() {
 
     if (hasDialogRowInDOM(cid)) _updateDialogRowInPlace({ cid, meta });
     else {
-      // new dialog appeared — append (order stable; will rise when new message comes)
       if (dialogs) {
         const row = renderDialogRowSkeleton({
           chatId: cid,
@@ -1779,8 +1802,6 @@ function startDialogsLive() {
   if (dialogsLiveTimer) return;
   if (!token) return;
 
-  // keep online statuses (and new chats) updated,
-  // but NEVER rebuild list => no avatar reload & no order jump
   dialogsLiveTimer = setInterval(async () => {
     if (!token) return;
     if (!isChatsTabActive()) return;
@@ -1797,7 +1818,7 @@ function stopDialogsLive() {
 }
 
 /* =========================
-   Search / Dialogs (SAFE DOM RENDER)
+   Search / Dialogs
    ========================= */
 
 async function search() {
@@ -1861,13 +1882,19 @@ async function loadDialogs({ silent = false } = {}) {
 
   installDialogsStyle();
 
-  // FIRST load: build rows once (no clears later needed)
+  // init once per session/user
   if (!dialogs.dataset.inited) {
     clearNode(dialogs);
     dialogs.dataset.inited = "1";
   }
 
-  // Build/update meta and ensure each row exists WITHOUT clearing => stable order
+  // ✅ cleanup: remove old rows not present in new list (prevents чужие диалоги)
+  const keep = new Set((list || []).map((d) => String(normChatId(d.chat_id))).filter(Boolean));
+  Array.from(dialogs.querySelectorAll(".item[data-chatid]")).forEach((el) => {
+    const cid = el.getAttribute("data-chatid") || "";
+    if (cid && !keep.has(String(cid))) el.remove();
+  });
+
   for (const d of (list || [])) {
     const cid = normChatId(d.chat_id);
     if (!cid) continue;
@@ -1903,12 +1930,10 @@ async function loadDialogs({ silent = false } = {}) {
     }
   }
 
-  // ensure unread badges reflect persisted state
   for (const [cid, v] of unreadByChatId.entries()) {
     paintUnreadBadge(cid, v === true);
   }
 
-  // hydrate last messages (stable: no reordering)
   hydrateDialogsLastMessagesStable(list).catch(() => {});
 }
 
@@ -2112,7 +2137,7 @@ async function maybeMarkRead() {
 }
 
 /* =========================
-   Scroll anchoring for prepend (prevents jumps)
+   Scroll anchoring for prepend
    ========================= */
 
 function getTopVisibleMessageAnchor() {
@@ -2247,7 +2272,6 @@ async function loadMessagesPage(beforeId = null, prepend = false) {
     for (const m of items) frag.appendChild(renderMessageNode(m));
     msgs.appendChild(frag);
 
-    // important: initial load should NOT reorder dialogs (only real new messages reorder)
     if (items.length) {
       const last = items[items.length - 1];
       updateDialogPreviewFromMessage(currentChatId, last, { moveToTop: false });
@@ -2394,7 +2418,6 @@ async function sendMessage() {
       renderMessage(msg);
     }
 
-    // ✅ sending should move dialog to top
     if (msg) updateDialogPreviewFromMessage(currentChatId, msg, { moveToTop: true });
 
     await maybeMarkRead();
@@ -2450,7 +2473,6 @@ function bindUI() {
   btnSend && (btnSend.onclick = () => sendMessage());
 
   btnLogout && (btnLogout.onclick = logout);
-  btnSaveProfile && (btnSaveProfile.onclick = saveProfile);
 
   if (file) {
     file.addEventListener("change", () => {
@@ -2553,7 +2575,7 @@ function bindUI() {
 }
 
 /* =========================
-   Runtime dithering (anti-banding)
+   Runtime dithering
    ========================= */
 
 function installRuntimeDither() {
@@ -2602,9 +2624,6 @@ function installRuntimeDither() {
   installRuntimeDither();
   installDialogsStyle();
 
-  loadPersistedUnread();
-  loadPersistedDrafts();
-
   fillYears();
   bindAvatarPreviews();
   bindUI();
@@ -2615,6 +2634,10 @@ function installRuntimeDither() {
   if (token) {
     await loadMe();
     if (me) {
+      // ✅ load per-user persisted state only after me is known
+      loadPersistedUnread();
+      loadPersistedDrafts();
+
       connectWS();
       await loadDialogs();
     } else {
