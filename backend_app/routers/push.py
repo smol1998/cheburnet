@@ -73,13 +73,18 @@ def _normalize_pem_multiline(s: str) -> str:
 
 def _b64_to_text(b64: str) -> str:
     """
-    Декодирует base64 (обычный) в текст.
+    Декодирует base64/base64url в текст.
     Терпимо к отсутствию padding (=).
     """
     s = "".join(str(b64).strip().split())
+
+    # base64url -> base64
+    s = s.replace("-", "+").replace("_", "/")
+
     pad = (-len(s)) % 4
     if pad:
-        s = s + ("=" * pad)
+        s += "=" * pad
+
     raw = base64.b64decode(s, validate=False)
     return raw.decode("utf-8", errors="strict")
 
@@ -87,28 +92,38 @@ def _b64_to_text(b64: str) -> str:
 def _get_vapid_private_key() -> str | None:
     """
     Ожидаем settings.VAPID_PRIVATE_KEY_PEM_B64:
-      - либо base64(PEM)
-      - либо (на всякий случай) уже PEM строка
+      - base64/base64url(PEM)
     Возвращаем нормализованный PEM.
     """
-    key_b64_or_pem = settings.VAPID_PRIVATE_KEY_PEM_B64
-    if not key_b64_or_pem:
+    key_b64 = settings.VAPID_PRIVATE_KEY_PEM_B64
+    if not key_b64:
         return None
 
-    s = str(key_b64_or_pem).strip()
+    s = str(key_b64).strip()
 
-    # Если вдруг в переменную положили PEM напрямую — поддержим
+    # Если вдруг кто-то положил PEM напрямую — тоже переживём
     if "-----BEGIN" in s and "-----END" in s:
-        return _normalize_pem_multiline(s)
+        pem = _normalize_pem_multiline(s)
+        if "-----BEGIN" not in pem or "-----END" not in pem:
+            log.error("VAPID key looks like PEM but normalization failed")
+            return None
+        return pem
 
-    # Иначе считаем, что это base64 от PEM
+    # Иначе считаем, что это base64/base64url от PEM
     try:
         pem_text = _b64_to_text(s)
     except (binascii.Error, UnicodeDecodeError, ValueError) as e:
         log.error("VAPID_PRIVATE_KEY_PEM_B64 decode failed: %s", e)
         return None
 
-    return _normalize_pem_multiline(pem_text)
+    pem = _normalize_pem_multiline(pem_text)
+
+    # финальная проверка
+    if "-----BEGIN" not in pem or "-----END" not in pem:
+        log.error("Decoded VAPID private key does not look like PEM")
+        return None
+
+    return pem
 
 
 def _get_vapid_public_key() -> str | None:
@@ -127,12 +142,12 @@ def _to_base64url(s: str) -> str:
     """
     Приводим subscription keys к base64url без '='.
     Частая проблема: фронт (fallback) шлёт обычный base64 с +/ и padding '='.
-    pywebpush/py_vapid обычно ожидают base64url.
+    pywebpush обычно ожидает base64url.
     """
     x = (s or "").strip()
     if not x:
         return x
-    x = "".join(x.split())          # убрать пробелы/переносы
+    x = "".join(x.split())
     x = x.replace("+", "-").replace("/", "_")
     x = x.rstrip("=")
     return x

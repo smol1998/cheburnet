@@ -22,10 +22,7 @@ def _norm_multiline_env(v: Any) -> Any:
         v = str(v)
 
     s = v.strip()
-
-    # Если ключ вставили как одну строку с \n — превращаем в реальные переносы
     s = s.replace("\\r\\n", "\n").replace("\\n", "\n")
-
     return s
 
 
@@ -56,7 +53,8 @@ class Settings(BaseSettings):
     # =========================
     # VAPID (Web Push)
     # =========================
-    # Теперь приватный ключ ожидается как base64 от PEM (или, на всякий случай, PEM тоже переживём)
+    # Приватный ключ ожидается как base64/base64url от PEM (одной строкой).
+    # (PEM напрямую тоже переживём на стороне push.py, но тут мы всё равно "ужимаем" как B64.)
     VAPID_PRIVATE_KEY_PEM_B64: str | None = None
     VAPID_PUBLIC_KEY_B64URL: str | None = None
     VAPID_SUBJECT: str = "mailto:admin@example.com"
