@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -16,6 +17,8 @@ from backend_app.config import settings
 
 
 router = APIRouter()
+
+logger = logging.getLogger("push")
 
 
 def _require_vapid():
@@ -92,11 +95,14 @@ def send_webpush_to_user(db: Session, user_id: int, data: dict[str, Any]) -> int
     Синхронная отправка web push по всем подпискам пользователя.
     Возвращает количество успешных отправок.
     """
-    if not settings.VAPID_PRIVATE_KEY_PEM:
+    # safety: test уже зовёт _require_vapid, но пусть будет
+    if not settings.VAPID_PRIVATE_KEY_PEM or not settings.VAPID_PUBLIC_KEY_B64URL:
+        logger.warning("VAPID keys missing (user_id=%s)", user_id)
         return 0
 
     subs = db.query(PushSubscription).filter(PushSubscription.user_id == user_id).all()
     if not subs:
+        logger.info("No subscriptions for user_id=%s", user_id)
         return 0
 
     payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -117,19 +123,41 @@ def send_webpush_to_user(db: Session, user_id: int, data: dict[str, Any]) -> int
                 ttl=60,
             )
             ok += 1
+
         except WebPushException as e:
-            # Если подписка умерла (410/404) — чистим из БД
             status_code = getattr(getattr(e, "response", None), "status_code", None)
+
+            # Логируем причину всегда, иначе "sent=0" без объяснений
+            resp_text = None
+            try:
+                resp_obj = getattr(e, "response", None)
+                if resp_obj is not None:
+                    resp_text = getattr(resp_obj, "text", None)
+            except Exception:
+                resp_text = None
+
+            logger.warning(
+                "WebPushException user_id=%s sub_id=%s status=%s endpoint=%s resp=%s",
+                user_id,
+                s.id,
+                status_code,
+                (s.endpoint or "")[:120],
+                (resp_text or "")[:300],
+            )
+
+            # Если подписка умерла — чистим из БД
             if status_code in (404, 410):
                 to_delete.append(s.id)
-        except Exception:
-            # не валим приложение из-за пушей
-            pass
+
+        except Exception as e:
+            # не валим приложение из-за пушей, но логируем stacktrace
+            logger.exception("Push send failed user_id=%s sub_id=%s err=%r", user_id, s.id, e)
 
     if to_delete:
         db.query(PushSubscription).filter(PushSubscription.id.in_(to_delete)).delete(synchronize_session=False)
         db.commit()
 
+    logger.info("Push result user_id=%s ok=%s total=%s", user_id, ok, len(subs))
     return ok
 
 
