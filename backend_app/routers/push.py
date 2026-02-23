@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 from datetime import datetime
@@ -76,11 +78,45 @@ def _normalize_pem_multiline(s: str) -> str:
     return x
 
 
+def _b64_to_text(b64: str) -> str:
+    """
+    Декодирует base64 (обычный) в текст.
+    Терпимо к отсутствию padding (=).
+    """
+    s = "".join(str(b64).strip().split())
+    # добавим padding при необходимости
+    pad = (-len(s)) % 4
+    if pad:
+        s = s + ("=" * pad)
+    raw = base64.b64decode(s, validate=False)
+    return raw.decode("utf-8", errors="strict")
+
+
 def _get_vapid_private_key() -> str | None:
-    key = settings.VAPID_PRIVATE_KEY_PEM
-    if not key:
+    """
+    Ожидаем settings.VAPID_PRIVATE_KEY_PEM_B64:
+      - либо base64(PEM)
+      - либо (на всякий случай) уже PEM строка
+    Возвращаем нормализованный PEM.
+    """
+    key_b64_or_pem = settings.VAPID_PRIVATE_KEY_PEM_B64
+    if not key_b64_or_pem:
         return None
-    return _normalize_pem_multiline(key)
+
+    s = str(key_b64_or_pem).strip()
+
+    # Если вдруг в переменную положили PEM напрямую — поддержим
+    if "-----BEGIN" in s and "-----END" in s:
+        return _normalize_pem_multiline(s)
+
+    # Иначе считаем, что это base64 от PEM
+    try:
+        pem_text = _b64_to_text(s)
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        # Если декодирование не удалось — вернём как есть (пусть упадёт с понятной ошибкой выше/ниже)
+        return None
+
+    return _normalize_pem_multiline(pem_text)
 
 
 def _get_vapid_public_key() -> str | None:

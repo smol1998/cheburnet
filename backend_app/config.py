@@ -1,5 +1,3 @@
-# backend_app/config.py
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -58,14 +56,33 @@ class Settings(BaseSettings):
     # =========================
     # VAPID (Web Push)
     # =========================
-    VAPID_PRIVATE_KEY_PEM: str | None = None
+    # Теперь приватный ключ ожидается как base64 от PEM (или, на всякий случай, PEM тоже переживём)
+    VAPID_PRIVATE_KEY_PEM_B64: str | None = None
     VAPID_PUBLIC_KEY_B64URL: str | None = None
     VAPID_SUBJECT: str = "mailto:admin@example.com"
 
     @field_validator("VAPID_PRIVATE_KEY_PEM_B64", mode="before")
     @classmethod
-    def _vapid_priv_norm(cls, v: Any) -> Any:
-        return _norm_multiline_env(v)
+    def _vapid_priv_b64_norm(cls, v: Any) -> Any:
+        """
+        Для B64 ключа:
+        - убираем пробелы/переносы строк (часто env/CI добавляют)
+        - убираем литералы '\\n'/'\\r\\n' если кто-то вставил с экранированием
+        """
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            v = str(v)
+        s = v.strip()
+
+        # На случай если кто-то запихнул base64 с экранированными переносами
+        s = s.replace("\\r\\n", "").replace("\\n", "")
+        # На случай реальных переносов в env
+        s = s.replace("\r", "").replace("\n", "")
+        # И просто все пробельные символы
+        s = "".join(s.split())
+
+        return s or None
 
     @field_validator("VAPID_PUBLIC_KEY_B64URL", mode="before")
     @classmethod
