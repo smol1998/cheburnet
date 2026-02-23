@@ -5,6 +5,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent  # корень проекта (рядом с backend_app)
 
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # VAPID
+    VAPID_PRIVATE_KEY_PEM: str | None = None
+    VAPID_PUBLIC_KEY_B64URL: str | None = None
+    VAPID_SUBJECT: str = "mailto:admin@example.com"
+
+
+settings = Settings()
+
 
 class Settings(BaseSettings):
     # всегда один и тот же файл БД: <project>/mvp.db

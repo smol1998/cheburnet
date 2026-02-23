@@ -8,6 +8,9 @@ from backend_app.deps import get_db, get_current_user
 from backend_app import models
 from backend_app.ws import manager
 
+# ✅ web push sender
+from backend_app.routers.push import send_webpush_to_user
+
 router = APIRouter()
 
 
@@ -182,7 +185,30 @@ async def send(chat_id: int, data: SendMessageIn, db: Session = Depends(get_db),
     oid = other_id(chat, user.id)
 
     payload = {"type": "message:new", "chat_id": chat_id, "message": message_dict}
+
+    # ✅ realtime WS
     await manager.send(oid, payload)
+
+    # ✅ настоящие web push (если вкладка закрыта/нет WS)
+    # отправляем краткий текст
+    try:
+        body = (message_dict.get("text") or "").strip()
+        if not body:
+            # если нет текста — покажем что это вложение
+            body = "Вложение" if (message_dict.get("attachments") or []) else "Новое сообщение"
+
+        send_webpush_to_user(
+            db,
+            oid,
+            {
+                "type": "message:new",
+                "chat_id": chat_id,
+                "title": "Новое сообщение",
+                "body": body[:120],
+            },
+        )
+    except Exception:
+        pass
 
     return message_dict
 
