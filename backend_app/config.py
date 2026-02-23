@@ -1,70 +1,45 @@
+# backend_app/config.py
+
 from pathlib import Path
-
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BASE_DIR = Path(__file__).resolve().parent.parent  # корень проекта (рядом с backend_app)
-
-from pydantic_settings import BaseSettings, SettingsConfigDict
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-
-    # VAPID
-    VAPID_PRIVATE_KEY_PEM: str | None = None
-    VAPID_PUBLIC_KEY_B64URL: str | None = None
-    VAPID_SUBJECT: str = "mailto:admin@example.com"
-
-
-settings = Settings()
-
-
-class Settings(BaseSettings):
-    # всегда один и тот же файл БД: <project>/mvp.db
-    database_url: str = f"sqlite:///{(BASE_DIR / 'mvp.db').as_posix()}"
-
-    # JWT
-    jwt_secret: str = "dev-secret-change-me"
-    jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60 * 24 * 7  # 7 дней
-
-    # файлы всегда в <project>/storage
-    storage_dir: str = str(BASE_DIR / "storage")
-
-    # =========================
-    # OpenAI (GPT assistant)
-    # =========================
-
-    # ✅ Railway-friendly env aliases:
-    # OPENAI_API_KEY / OPENAI_MODEL
-    openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")
-    openai_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_MODEL")
-
-    assistant_system_prompt: str = (
-        "Ты помощник в мессенджере. Дай краткую, полезную подсказку/черновик ответа "
-        "на сообщение собеседника с учетом контекста. "
-        "Не выдумывай факты. Тон — дружелюбный, естественный. "
-        "Если недостаточно данных — предложи 1 уточняющий вопрос."
-    )
-
-    # лимиты, чтобы не сжечь токены
-    assistant_max_messages: int = 14
-    assistant_max_message_chars: int = 800
-    assistant_max_draft_chars: int = 1200
-
-    # max_output_tokens в ответе модели
-    assistant_max_output_tokens: int = 180
-
-    # server-side rate limit (на юзера)
-    assistant_min_interval_ms: int = 1500          # не чаще 1.5 сек
-    assistant_max_requests_per_minute: int = 20    # на пользователя
 
     model_config = SettingsConfigDict(
         env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
+        extra="ignore"
     )
+
+    # =========================
+    # DATABASE
+    # =========================
+
+    database_url: str = f"sqlite:///{BASE_DIR / 'mvp.db'}"
+
+    # =========================
+    # JWT
+    # =========================
+
+    jwt_secret: str = "dev-secret-change-me"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60 * 24 * 7
+
+    # =========================
+    # STORAGE
+    # =========================
+
+    storage_dir: str = str(BASE_DIR / "storage")
+
+    # =========================
+    # VAPID (Web Push)
+    # =========================
+
+    VAPID_PRIVATE_KEY_PEM: str | None = None
+    VAPID_PUBLIC_KEY_B64URL: str | None = None
+    VAPID_SUBJECT: str = "mailto:admin@example.com"
 
 
 settings = Settings()
