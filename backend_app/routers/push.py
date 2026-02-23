@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import re
 from datetime import datetime
 from typing import Any
@@ -18,6 +19,7 @@ from backend_app.models import PushSubscription
 from backend_app.config import settings
 
 router = APIRouter()
+log = logging.getLogger("push")
 
 
 # -------------------------
@@ -44,37 +46,28 @@ def _normalize_pem_multiline(s: str) -> str:
     x = str(s).strip()
 
     # 1) Разруливаем экранирование (самое частое на Railway)
-    # порядок важен: сначала \\r\\n, потом \\n
     x = x.replace("\\r\\n", "\n").replace("\\n", "\n")
     # 2) Разруливаем реальные CRLF
     x = x.replace("\r\n", "\n").replace("\r", "\n").strip()
 
     # Если PEM уже выглядит нормально — вернём
     if "-----BEGIN" in x and "\n" in x and "-----END" in x:
-        # лёгкая чистка лишних пустых строк
         lines = [ln.strip() for ln in x.split("\n") if ln.strip() != ""]
         return "\n".join(lines) + "\n"
 
     # Если PEM пришёл одной строкой: BEGIN ... END без \n
     if "-----BEGIN" in x and "-----END" in x and "\n" not in x:
-        # Пробуем аккуратно разложить:
-        # BEGIN + base64 + END
-        # Находим маркеры
         m1 = _PEM_BEGIN_RE.search(x)
         m2 = _PEM_END_RE.search(x)
         if m1 and m2:
             begin = m1.group(0)
             end = m2.group(0)
-            # Всё между ними — base64 (возможно с пробелами)
             inner = x[x.find(begin) + len(begin) : x.find(end)]
             inner = inner.strip().replace(" ", "")
-            # Разбиваем base64 по 64 символа
             chunks = [inner[i : i + 64] for i in range(0, len(inner), 64) if inner[i : i + 64]]
             lines = [begin] + chunks + [end]
             return "\n".join(lines) + "\n"
 
-    # Если это вообще не PEM (например DER/base64) — оставим как есть,
-    # но pywebpush обычно упадёт — и это будет честная ошибка.
     return x
 
 
@@ -84,7 +77,6 @@ def _b64_to_text(b64: str) -> str:
     Терпимо к отсутствию padding (=).
     """
     s = "".join(str(b64).strip().split())
-    # добавим padding при необходимости
     pad = (-len(s)) % 4
     if pad:
         s = s + ("=" * pad)
@@ -112,15 +104,14 @@ def _get_vapid_private_key() -> str | None:
     # Иначе считаем, что это base64 от PEM
     try:
         pem_text = _b64_to_text(s)
-    except (binascii.Error, UnicodeDecodeError, ValueError):
-        # Если декодирование не удалось — вернём как есть (пусть упадёт с понятной ошибкой выше/ниже)
+    except (binascii.Error, UnicodeDecodeError, ValueError) as e:
+        log.error("VAPID_PRIVATE_KEY_PEM_B64 decode failed: %s", e)
         return None
 
     return _normalize_pem_multiline(pem_text)
 
 
 def _get_vapid_public_key() -> str | None:
-    # public key должен быть base64url (как в WebPush subscribe)
     pub = settings.VAPID_PUBLIC_KEY_B64URL
     if not pub:
         return None
@@ -130,6 +121,21 @@ def _get_vapid_public_key() -> str | None:
 def _require_vapid():
     if not _get_vapid_private_key() or not _get_vapid_public_key():
         raise HTTPException(500, "VAPID keys are not configured on server")
+
+
+def _to_base64url(s: str) -> str:
+    """
+    Приводим subscription keys к base64url без '='.
+    Частая проблема: фронт (fallback) шлёт обычный base64 с +/ и padding '='.
+    pywebpush/py_vapid обычно ожидают base64url.
+    """
+    x = (s or "").strip()
+    if not x:
+        return x
+    x = "".join(x.split())          # убрать пробелы/переносы
+    x = x.replace("+", "-").replace("/", "_")
+    x = x.rstrip("=")
+    return x
 
 
 # -------------------------
@@ -165,8 +171,9 @@ def subscribe(data: SubscribeIn, db: Session = Depends(get_db), user=Depends(get
     if not endpoint:
         raise HTTPException(400, "Missing endpoint")
 
-    p256dh = (data.keys.p256dh or "").strip()
-    auth = (data.keys.auth or "").strip()
+    # ✅ нормализуем (base64url) ещё на входе
+    p256dh = _to_base64url(data.keys.p256dh or "")
+    auth = _to_base64url(data.keys.auth or "")
     if not p256dh or not auth:
         raise HTTPException(400, "Missing subscription keys")
 
@@ -213,23 +220,24 @@ def unsubscribe(endpoint: str | None = None, db: Session = Depends(get_db), user
 # Sender
 # -------------------------
 
-def send_webpush_to_user(db: Session, user_id: int, data: dict[str, Any]) -> int:
+def send_webpush_to_user(db: Session, user_id: int, data: dict[str, Any]) -> dict[str, Any]:
     """
     Синхронная отправка web push по всем подпискам пользователя.
-    Возвращает количество успешных отправок.
+    Возвращает детали, чтобы понимать, почему sent=0.
     """
     priv = _get_vapid_private_key()
     if not priv:
-        return 0
+        return {"sent": 0, "total": 0, "reason": "no_private_key"}
 
     subs = db.query(PushSubscription).filter(PushSubscription.user_id == user_id).all()
     if not subs:
-        return 0
+        return {"sent": 0, "total": 0, "reason": "no_subscriptions"}
 
     payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
 
     ok = 0
     to_delete: list[int] = []
+    errors: list[dict[str, Any]] = []
 
     for s in subs:
         try:
@@ -245,27 +253,37 @@ def send_webpush_to_user(db: Session, user_id: int, data: dict[str, Any]) -> int
             )
             ok += 1
         except WebPushException as e:
-            # Если подписка умерла (410/404) — чистим из БД
             status_code = getattr(getattr(e, "response", None), "status_code", None)
+            body = getattr(getattr(e, "response", None), "text", None)
+            err = {
+                "endpoint": s.endpoint[:120],
+                "status_code": status_code,
+                "error": str(e),
+                "response_text": body[:300] if isinstance(body, str) else None,
+            }
+            errors.append(err)
+            log.warning("WebPushException: %s", err)
+
             if status_code in (404, 410):
                 to_delete.append(s.id)
-        except Exception:
-            # Не валим приложение из-за пушей
-            pass
+        except Exception as e:
+            err = {"endpoint": s.endpoint[:120], "error": repr(e)}
+            errors.append(err)
+            log.exception("Webpush failed: %s", err)
 
     if to_delete:
         db.query(PushSubscription).filter(PushSubscription.id.in_(to_delete)).delete(synchronize_session=False)
         db.commit()
 
-    return ok
+    return {"sent": ok, "total": len(subs), "deleted": len(to_delete), "errors": errors[:5]}
 
 
 @router.post("/test")
 def test_push(db: Session = Depends(get_db), user=Depends(get_current_user)):
     _require_vapid()
-    sent = send_webpush_to_user(
+    res = send_webpush_to_user(
         db,
         user.id,
         {"type": "test", "title": "Test push", "body": "It works!", "ts": datetime.utcnow().isoformat()},
     )
-    return {"ok": True, "sent": int(sent)}
+    return {"ok": True, **res}
