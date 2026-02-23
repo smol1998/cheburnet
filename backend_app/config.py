@@ -1,17 +1,41 @@
 # backend_app/config.py
 
-from pathlib import Path
+from __future__ import annotations
 
-from pydantic import field_validator
+from pathlib import Path
+from typing import Any
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _norm_multiline_env(v: Any) -> Any:
+    """
+    Railway/ENV часто хранит PEM либо:
+    - реальными переносами строк
+    - либо в одну строку с символами \\n
+    Это нормализует всё к нормальному PEM.
+    """
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        v = str(v)
+
+    s = v.strip()
+
+    # Если ключ вставили как одну строку с \n — превращаем в реальные переносы
+    s = s.replace("\\r\\n", "\n").replace("\\n", "\n")
+
+    return s
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",
+        case_sensitive=True,
     )
 
     # =========================
@@ -38,17 +62,18 @@ class Settings(BaseSettings):
     VAPID_PUBLIC_KEY_B64URL: str | None = None
     VAPID_SUBJECT: str = "mailto:admin@example.com"
 
-    @field_validator("VAPID_PRIVATE_KEY_PEM")
+    @field_validator("VAPID_PRIVATE_KEY_PEM", mode="before")
     @classmethod
-    def _fix_pem_newlines(cls, v: str | None):
-        """
-        Railway/CI часто сохраняют PEM как одну строку с буквальными '\\n'.
-        PyWebPush ожидает реальный PEM с переносами строк.
-        """
-        if not v:
-            return v
-        if "\\n" in v and "\n" not in v:
-            v = v.replace("\\n", "\n")
+    def _vapid_priv_norm(cls, v: Any) -> Any:
+        return _norm_multiline_env(v)
+
+    @field_validator("VAPID_PUBLIC_KEY_B64URL", mode="before")
+    @classmethod
+    def _vapid_pub_norm(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            v = str(v)
         return v.strip()
 
 
