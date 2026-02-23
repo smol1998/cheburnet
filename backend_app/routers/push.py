@@ -14,6 +14,9 @@ from sqlalchemy.orm import Session
 
 from pywebpush import webpush, WebPushException
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
+
 from backend_app.deps import get_db, get_current_user
 from backend_app.models import PushSubscription
 from backend_app.config import settings
@@ -21,141 +24,151 @@ from backend_app.config import settings
 router = APIRouter()
 log = logging.getLogger("push")
 
+
+# -------------------------
+# PEM helpers
+# -------------------------
+
 _PEM_BEGIN_RE = re.compile(r"-----BEGIN [A-Z0-9 ]+-----")
 _PEM_END_RE = re.compile(r"-----END [A-Z0-9 ]+-----")
 
 
-def _repair_pem_headers(x: str) -> str:
+def _chunk64(s: str) -> str:
+    return "\n".join(s[i : i + 64] for i in range(0, len(s), 64) if s[i : i + 64])
+
+
+def _normalize_pem_multiline(pem: str) -> str:
     """
-    Частая беда: кто-то удалил пробелы (или валидатор env),
-    и заголовок стал вида:
-      -----BEGINPRIVATEKEY-----
-    Чиним самые типовые варианты.
+    Приводит любой "PEM-подобный" ввод к корректному PEM:
+    - поддерживает реальные \n, CRLF
+    - поддерживает '\\n'
+    - поддерживает PEM в одну строку
+    - всегда возвращает PEM с \n и завершающим \n
     """
+    x = (pem or "").strip()
     if not x:
         return x
-    x = x.replace("-----BEGINPRIVATEKEY-----", "-----BEGIN PRIVATE KEY-----")
-    x = x.replace("-----ENDPRIVATEKEY-----", "-----END PRIVATE KEY-----")
-    x = x.replace("-----BEGINPUBLICKEY-----", "-----BEGIN PUBLIC KEY-----")
-    x = x.replace("-----ENDPUBLICKEY-----", "-----END PUBLIC KEY-----")
-    x = x.replace("-----BEGINECPRIVATEKEY-----", "-----BEGIN EC PRIVATE KEY-----")
-    x = x.replace("-----ENDECPRIVATEKEY-----", "-----END EC PRIVATE KEY-----")
-    return x
 
-
-def _normalize_pem_multiline(s: str) -> str:
-    """
-    Делает PEM валидным для pywebpush/py_vapid.
-    Поддерживаем:
-      - настоящие '\n'
-      - '\\n' и '\\r\\n'
-      - CRLF
-      - PEM в одну строку без переводов
-      - PEM с "сломанных" заголовков без пробелов
-    """
-    if not s:
-        return s
-
-    x = str(s).strip()
-    x = _repair_pem_headers(x)
-
-    # 1) экранированные переносы
+    # 1) разэкранируем
     x = x.replace("\\r\\n", "\n").replace("\\n", "\n")
-    # 2) реальные CRLF
+    # 2) CRLF -> LF
     x = x.replace("\r\n", "\n").replace("\r", "\n").strip()
 
-    # Уже нормальный PEM
-    if "-----BEGIN" in x and "\n" in x and "-----END" in x:
+    # уже нормальный PEM
+    if "-----BEGIN" in x and "-----END" in x and "\n" in x:
         lines = [ln.strip() for ln in x.split("\n") if ln.strip()]
         return "\n".join(lines) + "\n"
 
-    # PEM одной строкой (BEGIN...base64...END)
+    # PEM, но в одну строку
     if "-----BEGIN" in x and "-----END" in x and "\n" not in x:
         m1 = _PEM_BEGIN_RE.search(x)
         m2 = _PEM_END_RE.search(x)
         if m1 and m2:
             begin = m1.group(0)
             end = m2.group(0)
-            inner = x[x.find(begin) + len(begin) : x.find(end)]
-            inner = "".join(inner.strip().split())  # убрать пробелы
-            chunks = [inner[i : i + 64] for i in range(0, len(inner), 64) if inner[i : i + 64]]
-            return "\n".join([begin] + chunks + [end]) + "\n"
+            inner = x[x.find(begin) + len(begin) : x.find(end)].strip()
+            inner = inner.replace(" ", "")
+            body = _chunk64(inner)
+            return f"{begin}\n{body}\n{end}\n"
 
     return x
 
 
-def _b64_to_text(b64: str) -> str:
+def _strip_ws(s: str) -> str:
+    return "".join((s or "").split())
+
+
+def _b64_any_to_bytes(s: str) -> bytes:
     """
-    base64/base64url -> utf-8 text.
+    Декодирует base64 ИЛИ base64url.
+    Терпим отсутствие '=' и наличие '-' '_' вместо '+' '/'.
     """
-    s = "".join(str(b64).strip().split())
-    s = s.replace("-", "+").replace("_", "/")
-    pad = (-len(s)) % 4
+    x = _strip_ws(s)
+    if not x:
+        return b""
+
+    # base64url -> base64
+    x = x.replace("-", "+").replace("_", "/")
+
+    # padding
+    pad = (-len(x)) % 4
     if pad:
-        s += "=" * pad
-    raw = base64.b64decode(s, validate=False)
-    return raw.decode("utf-8", errors="strict")
+        x += "=" * pad
+
+    return base64.b64decode(x, validate=False)
 
 
-def _wrap_bare_key_to_pem(bare_b64: str) -> str:
+def _der_bytes_to_pem(der: bytes) -> str:
     """
-    Если кто-то положил только base64-тело приватника без заголовков.
+    DER -> PEM (PKCS8 private key) с помощью cryptography.
     """
-    inner = "".join(str(bare_b64).strip().split())
-    chunks = [inner[i : i + 64] for i in range(0, len(inner), 64) if inner[i : i + 64]]
-    return "-----BEGIN PRIVATE KEY-----\n" + "\n".join(chunks) + "\n-----END PRIVATE KEY-----\n"
+    key = serialization.load_der_private_key(der, password=None, backend=default_backend())
+    pem_bytes = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    return pem_bytes.decode("utf-8").strip() + "\n"
 
 
-def _get_vapid_private_key() -> str | None:
+def _normalize_vapid_private_key_to_pem(raw: str) -> str:
     """
-    Берём settings.VAPID_PRIVATE_KEY_PEM_B64:
-      - PEM напрямую (multiline)  ✅
-      - PEM с поломанными заголовками (без пробелов) ✅
-      - base64/base64url(PEM) ✅
-      - "голое" base64-тело приватника (без BEGIN/END) ✅
-    Возвращаем нормализованный PEM.
+    100% нормализация: принимает raw в одном из форматов:
+      - PEM (любой кривой: склеенный / с \\n / CRLF)
+      - base64(PEM)
+      - base64url(PEM)
+      - base64/base64url(DER)
+    Возвращает корректный PEM.
     """
-    raw = settings.VAPID_PRIVATE_KEY_PEM_B64
-    if not raw:
-        return None
+    s = (raw or "").strip()
+    if not s:
+        raise ValueError("empty VAPID private key")
 
-    s = str(raw).strip()
-    s = _repair_pem_headers(s)
-
-    # 1) PEM напрямую
+    # (A) Если похоже на PEM — нормализуем и вернём
     if "-----BEGIN" in s and "-----END" in s:
         pem = _normalize_pem_multiline(s)
         if "-----BEGIN" in pem and "-----END" in pem:
             return pem
-        log.error("VAPID key looked like PEM but normalization failed")
-        return None
+        raise ValueError("PEM markers present but normalization failed")
 
-    # 2) base64/base64url(PEM) -> text
-    pem_text: str | None = None
+    # (B) Иначе пробуем base64/base64url -> bytes
     try:
-        maybe_text = _b64_to_text(s)
-        if "-----BEGIN" in maybe_text and "-----END" in maybe_text:
-            pem_text = maybe_text
-    except Exception:
-        pem_text = None
+        der_or_text = _b64_any_to_bytes(s)
+    except (binascii.Error, ValueError) as e:
+        raise ValueError(f"base64 decode failed: {e}") from e
 
-    if pem_text:
-        pem = _normalize_pem_multiline(pem_text)
-        if "-----BEGIN" in pem and "-----END" in pem:
-            return pem
-        log.error("Decoded base64 VAPID key is not valid PEM after normalization")
+    if not der_or_text:
+        raise ValueError("base64 decode returned empty bytes")
+
+    # (B1) Попробуем интерпретировать bytes как UTF-8 текст (вдруг это base64(PEM))
+    try:
+        txt = der_or_text.decode("utf-8")
+        if "-----BEGIN" in txt and "-----END" in txt:
+            return _normalize_pem_multiline(txt)
+    except UnicodeDecodeError:
+        pass
+
+    # (B2) Иначе считаем, что это DER private key и конвертим в PEM
+    try:
+        return _der_bytes_to_pem(der_or_text)
+    except Exception as e:
+        raise ValueError(f"DER->PEM conversion failed: {e}") from e
+
+
+def _get_vapid_private_key_pem() -> str | None:
+    raw = settings.VAPID_PRIVATE_KEY_PEM_B64
+    if not raw:
         return None
-
-    # 3) возможно это "голое" base64-тело ключа без заголовков
-    # (часто начинается с MIGH.../MHc... и т.п.)
-    if re.fullmatch(r"[A-Za-z0-9+/=_-]+", s) and len(s) >= 64:
-        pem = _normalize_pem_multiline(_wrap_bare_key_to_pem(s))
-        if "-----BEGIN" in pem and "-----END" in pem:
-            return pem
-
-    # 4) совсем непонятный формат
-    log.error("VAPID private key is in unknown format (no PEM headers, no base64-PEM)")
-    return None
+    try:
+        pem = _normalize_vapid_private_key_to_pem(str(raw))
+        # sanity-check: обязательно с переносами
+        if "-----BEGIN" not in pem or "-----END" not in pem or "\n" not in pem:
+            raise ValueError("normalized key is not valid PEM")
+        return pem
+    except Exception as e:
+        # В логах будет понятно, что именно не так
+        log.error("VAPID private key normalization failed: %s", e)
+        return None
 
 
 def _get_vapid_public_key() -> str | None:
@@ -166,19 +179,27 @@ def _get_vapid_public_key() -> str | None:
 
 
 def _require_vapid():
-    if not _get_vapid_private_key() or not _get_vapid_public_key():
+    if not _get_vapid_private_key_pem() or not _get_vapid_public_key():
         raise HTTPException(500, "VAPID keys are not configured on server")
 
 
 def _to_base64url(s: str) -> str:
+    """
+    Subscription keys должны быть base64url без '='.
+    На всякий случай приводим.
+    """
     x = (s or "").strip()
     if not x:
         return x
-    x = "".join(x.split())
+    x = _strip_ws(x)
     x = x.replace("+", "-").replace("/", "_")
     x = x.rstrip("=")
     return x
 
+
+# -------------------------
+# Schemas
+# -------------------------
 
 class SubKeysIn(BaseModel):
     p256dh: str
@@ -190,6 +211,10 @@ class SubscribeIn(BaseModel):
     keys: SubKeysIn
     user_agent: str | None = None
 
+
+# -------------------------
+# Routes
+# -------------------------
 
 @router.get("/vapid_public_key")
 def vapid_public_key():
@@ -249,10 +274,18 @@ def unsubscribe(endpoint: str | None = None, db: Session = Depends(get_db), user
     return {"ok": True, "deleted": int(deleted)}
 
 
+# -------------------------
+# Sender
+# -------------------------
+
 def send_webpush_to_user(db: Session, user_id: int, data: dict[str, Any]) -> dict[str, Any]:
-    priv = _get_vapid_private_key()
-    if not priv:
-        return {"sent": 0, "total": 0, "reason": "no_private_key"}
+    """
+    Синхронная отправка web push по всем подпискам пользователя.
+    Возвращает детали, чтобы понимать, почему sent=0.
+    """
+    priv_pem = _get_vapid_private_key_pem()
+    if not priv_pem:
+        return {"sent": 0, "total": 0, "reason": "bad_or_missing_private_key"}
 
     subs = db.query(PushSubscription).filter(PushSubscription.user_id == user_id).all()
     if not subs:
@@ -272,7 +305,7 @@ def send_webpush_to_user(db: Session, user_id: int, data: dict[str, Any]) -> dic
                     "keys": {"p256dh": s.p256dh, "auth": s.auth},
                 },
                 data=payload,
-                vapid_private_key=priv,
+                vapid_private_key=priv_pem,              # ✅ ВСЕГДА PEM
                 vapid_claims={"sub": settings.VAPID_SUBJECT},
                 ttl=60,
             )
@@ -288,6 +321,7 @@ def send_webpush_to_user(db: Session, user_id: int, data: dict[str, Any]) -> dic
             }
             errors.append(err)
             log.warning("WebPushException: %s", err)
+
             if status_code in (404, 410):
                 to_delete.append(s.id)
         except Exception as e:
