@@ -9,14 +9,6 @@ from pydantic import field_validator
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-def _as_str(v: Any) -> str | None:
-    if v is None:
-        return None
-    if isinstance(v, str):
-        return v
-    return str(v)
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -44,32 +36,37 @@ class Settings(BaseSettings):
     # =========================
     # VAPID (Web Push)
     # =========================
-    # Мы допускаем, что в Railway тут может быть:
-    # - PEM (с переносами / с \n / в одну строку)
+    # Можешь положить сюда:
+    # - PEM
     # - base64(PEM)
     # - base64url(PEM)
-    # - DER в base64/base64url
+    # - base64/base64url(DER)
     VAPID_PRIVATE_KEY_PEM_B64: str | None = None
+
+    # В браузер отдаём public key (base64url)
     VAPID_PUBLIC_KEY_B64URL: str | None = None
+
+    # Типа mailto:admin@example.com
     VAPID_SUBJECT: str = "mailto:admin@example.com"
 
     @field_validator("VAPID_PRIVATE_KEY_PEM_B64", mode="before")
     @classmethod
-    def _vapid_priv_keep_rawish(cls, v: Any) -> Any:
-        s = _as_str(v)
-        if s is None:
+    def _vapid_priv_loose_norm(cls, v: Any) -> Any:
+        if v is None:
             return None
-        # убираем только внешние пробелы; внутри не трогаем,
-        # потому что нормализация будет в push.py
-        return s.strip() or None
+        if not isinstance(v, str):
+            v = str(v)
+        # не уничтожаем PEM, просто убираем пробелы по краям
+        return v.strip() or None
 
     @field_validator("VAPID_PUBLIC_KEY_B64URL", mode="before")
     @classmethod
     def _vapid_pub_norm(cls, v: Any) -> Any:
-        s = _as_str(v)
-        if s is None:
+        if v is None:
             return None
-        return s.strip() or None
+        if not isinstance(v, str):
+            v = str(v)
+        return v.strip() or None
 
 
 settings = Settings()
