@@ -4,6 +4,7 @@ import base64
 import binascii
 import json
 import logging
+import os
 import re
 from datetime import datetime
 from typing import Any
@@ -14,9 +15,6 @@ from sqlalchemy.orm import Session
 
 from pywebpush import webpush, WebPushException
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.backends import default_backend
-
 from backend_app.deps import get_db, get_current_user
 from backend_app.models import PushSubscription
 from backend_app.config import settings
@@ -24,10 +22,16 @@ from backend_app.config import settings
 router = APIRouter()
 log = logging.getLogger("push")
 
+# -------------------------
+# VAPID private key -> PEM file (MOST STABLE)
+# -------------------------
 
-# -------------------------
-# Helpers: base64/base64url
-# -------------------------
+_PEM_BEGIN_RE = re.compile(r"-----BEGIN [A-Z0-9 ]+-----")
+_PEM_END_RE = re.compile(r"-----END [A-Z0-9 ]+-----")
+
+_VAPID_PEM_CACHE_PATH = "/tmp/vapid_private.pem"
+_VAPID_PEM_CACHE_RAW_FINGERPRINT = None  # in-process cache
+
 
 def _strip_ws(s: str) -> str:
     return "".join((s or "").split())
@@ -35,58 +39,37 @@ def _strip_ws(s: str) -> str:
 
 def _b64_any_to_bytes(s: str) -> bytes:
     """
-    Decodes base64 OR base64url (tolerant to missing padding).
+    Decode base64 OR base64url.
+    Accepts missing padding, '-' '_' variants, and whitespace.
     """
     x = _strip_ws(s)
     if not x:
         return b""
-
-    # base64url -> base64
     x = x.replace("-", "+").replace("_", "/")
-
-    # padding
     pad = (-len(x)) % 4
     if pad:
         x += "=" * pad
-
     return base64.b64decode(x, validate=False)
-
-
-def _b64url_no_pad(b: bytes) -> str:
-    """
-    bytes -> base64url without '='
-    """
-    return base64.urlsafe_b64encode(b).decode("ascii").rstrip("=")
-
-
-# -------------------------
-# Helpers: PEM normalization
-# -------------------------
-
-_PEM_BEGIN_RE = re.compile(r"-----BEGIN [A-Z0-9 ]+-----")
-_PEM_END_RE = re.compile(r"-----END [A-Z0-9 ]+-----")
 
 
 def _chunk64(s: str) -> str:
     return "\n".join(s[i : i + 64] for i in range(0, len(s), 64) if s[i : i + 64])
 
 
-def _normalize_pem_multiline(pem: str) -> str:
+def _normalize_pem(pem: str) -> str:
     """
-    Normalize ANY "PEM-like" string into valid PEM with LF newlines and trailing '\n'.
+    Normalize any PEM-like input to strict PEM with LF and trailing newline.
     Handles:
-      - real \n, CRLF
-      - literal '\\n'
-      - PEM in one line
-      - extra spaces/empty lines
+    - real newlines
+    - '\\n' escaped newlines
+    - CRLF
+    - PEM in one line (BEGIN...END without newlines)
     """
     x = (pem or "").strip()
     if not x:
-        return x
+        return ""
 
-    # 1) unescape
     x = x.replace("\\r\\n", "\n").replace("\\n", "\n")
-    # 2) CRLF -> LF
     x = x.replace("\r\n", "\n").replace("\r", "\n").strip()
 
     # already multiline PEM
@@ -94,132 +77,118 @@ def _normalize_pem_multiline(pem: str) -> str:
         lines = [ln.strip() for ln in x.split("\n") if ln.strip()]
         return "\n".join(lines) + "\n"
 
-    # one-line PEM
+    # single-line PEM
     if "-----BEGIN" in x and "-----END" in x and "\n" not in x:
         m1 = _PEM_BEGIN_RE.search(x)
         m2 = _PEM_END_RE.search(x)
         if m1 and m2:
             begin = m1.group(0)
             end = m2.group(0)
-            inner = x[x.find(begin) + len(begin) : x.find(end)].strip()
-            inner = inner.replace(" ", "")
-            body = _chunk64(inner)
-            return f"{begin}\n{body}\n{end}\n"
+            inner = x[x.find(begin) + len(begin) : x.find(end)].strip().replace(" ", "")
+            return f"{begin}\n{_chunk64(inner)}\n{end}\n"
 
-    return x
+    return x + ("\n" if not x.endswith("\n") else "")
 
 
-# -------------------------
-# ✅ VAPID private key: normalize to base64url(DER)
-# -------------------------
-
-def _pem_to_der_pkcs8(pem_text: str) -> bytes:
+def _raw_env_private_key() -> str | None:
     """
-    Loads PEM private key and exports it as PKCS8 DER bytes.
+    settings.VAPID_PRIVATE_KEY_PEM_B64:
+      - either base64/base64url(PEM text)
+      - or raw PEM text
     """
-    key = serialization.load_pem_private_key(
-        pem_text.encode("utf-8"),
-        password=None,
-        backend=default_backend(),
-    )
-    der = key.private_bytes(
-        encoding=serialization.Encoding.DER,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-    return der
+    v = settings.VAPID_PRIVATE_KEY_PEM_B64
+    if not v:
+        return None
+    return str(v).strip()
 
 
-def _der_validate_and_normalize_to_pkcs8(der: bytes) -> bytes:
+def _private_key_to_pem_text(raw: str) -> str:
     """
-    Validate DER is a private key and re-export as PKCS8 DER (stable).
-    """
-    key = serialization.load_der_private_key(der, password=None, backend=default_backend())
-    der2 = key.private_bytes(
-        encoding=serialization.Encoding.DER,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-    return der2
-
-
-def _normalize_vapid_private_key_to_b64url_der(raw: str) -> str:
-    """
-    100% robust normalization:
-    Accepts raw in any of these formats:
-      - PEM (multiline / one-line / with \\n / CRLF)
-      - base64(PEM)
-      - base64url(PEM)
-      - base64/base64url(DER)
-    Returns: base64url(PKCS8-DER) WITHOUT '='
-
-    This matches what your py_vapid version expects (it b64urldecode()'s the string).
+    100% robust:
+    - if raw already PEM -> normalize and return
+    - else assume base64/base64url that decodes to PEM text (UTF-8)
     """
     s = (raw or "").strip()
     if not s:
-        raise ValueError("empty VAPID private key")
+        raise ValueError("empty private key")
 
-    # (A) Looks like PEM
     if "-----BEGIN" in s and "-----END" in s:
-        pem = _normalize_pem_multiline(s)
-        der = _pem_to_der_pkcs8(pem)
-        return _b64url_no_pad(der)
+        pem = _normalize_pem(s)
+        if "-----BEGIN" not in pem or "-----END" not in pem:
+            raise ValueError("PEM markers present but invalid after normalize")
+        return pem
 
-    # (B) Otherwise decode base64/base64url to bytes
-    b = _b64_any_to_bytes(s)
+    # base64/base64url -> bytes -> text
+    try:
+        b = _b64_any_to_bytes(s)
+    except (binascii.Error, ValueError) as e:
+        raise ValueError(f"base64 decode failed: {e}") from e
+
     if not b:
-        raise ValueError("base64 decode returned empty bytes")
+        raise ValueError("base64 decode returned empty")
 
-    # (B1) Maybe those bytes are UTF-8 PEM text (base64(PEM))
     try:
         txt = b.decode("utf-8")
-        if "-----BEGIN" in txt and "-----END" in txt:
-            pem = _normalize_pem_multiline(txt)
-            der = _pem_to_der_pkcs8(pem)
-            return _b64url_no_pad(der)
-    except UnicodeDecodeError:
-        pass
+    except UnicodeDecodeError as e:
+        raise ValueError("base64 does not decode to UTF-8 PEM text") from e
 
-    # (B2) Otherwise treat as DER private key
-    der2 = _der_validate_and_normalize_to_pkcs8(b)
-    return _b64url_no_pad(der2)
+    if "-----BEGIN" not in txt or "-----END" not in txt:
+        raise ValueError("decoded text is not PEM")
+
+    return _normalize_pem(txt)
 
 
-def _get_vapid_private_key_for_pywebpush() -> str | None:
+def _ensure_vapid_pem_file() -> str | None:
     """
-    Returns base64url(DER) string expected by py_vapid (NO '=').
+    Writes normalized PEM into /tmp/vapid_private.pem and returns its path.
+    Cached per-process by fingerprint to avoid rewriting every request.
     """
-    raw = settings.VAPID_PRIVATE_KEY_PEM_B64
+    global _VAPID_PEM_CACHE_RAW_FINGERPRINT
+
+    raw = _raw_env_private_key()
     if not raw:
         return None
+
+    # fingerprint for hot-reload env changes (rare, but ok)
+    fp = str(hash(raw))
+
+    if _VAPID_PEM_CACHE_RAW_FINGERPRINT == fp and os.path.exists(_VAPID_PEM_CACHE_PATH):
+        return _VAPID_PEM_CACHE_PATH
+
     try:
-        return _normalize_vapid_private_key_to_b64url_der(str(raw))
+        pem_text = _private_key_to_pem_text(raw)
     except Exception as e:
-        log.error("VAPID private key normalization failed: %s", e)
+        log.error("VAPID private key invalid: %s", e)
+        return None
+
+    try:
+        with open(_VAPID_PEM_CACHE_PATH, "w", encoding="utf-8", newline="\n") as f:
+            f.write(pem_text)
+        _VAPID_PEM_CACHE_RAW_FINGERPRINT = fp
+        return _VAPID_PEM_CACHE_PATH
+    except Exception as e:
+        log.error("Cannot write VAPID pem file: %s", e)
         return None
 
 
 def _get_vapid_public_key() -> str | None:
     pub = settings.VAPID_PUBLIC_KEY_B64URL
-    if not pub:
-        return None
-    return str(pub).strip()
+    return str(pub).strip() if pub else None
 
 
 def _require_vapid():
-    # Private key must be convertible, public key must exist
-    if not _get_vapid_private_key_for_pywebpush() or not _get_vapid_public_key():
+    if not _ensure_vapid_pem_file() or not _get_vapid_public_key():
         raise HTTPException(500, "VAPID keys are not configured on server")
 
 
 def _to_base64url(s: str) -> str:
     """
-    Subscription keys MUST be base64url without '='.
-    (Some browsers/old code can give base64 with +/ and padding.)
+    Subscription keys must be base64url without '='.
+    Normalize just in case.
     """
     x = (s or "").strip()
     if not x:
-        return x
+        return ""
     x = _strip_ws(x)
     x = x.replace("+", "-").replace("/", "_")
     x = x.rstrip("=")
@@ -309,11 +278,11 @@ def unsubscribe(endpoint: str | None = None, db: Session = Depends(get_db), user
 
 def send_webpush_to_user(db: Session, user_id: int, data: dict[str, Any]) -> dict[str, Any]:
     """
-    Sync send webpush to all user subscriptions.
-    Returns details to debug sent=0.
+    Sync webpush to all subscriptions.
+    Returns details for debugging.
     """
-    priv = _get_vapid_private_key_for_pywebpush()
-    if not priv:
+    pem_path = _ensure_vapid_pem_file()
+    if not pem_path:
         return {"sent": 0, "total": 0, "reason": "bad_or_missing_private_key"}
 
     subs = db.query(PushSubscription).filter(PushSubscription.user_id == user_id).all()
@@ -334,26 +303,25 @@ def send_webpush_to_user(db: Session, user_id: int, data: dict[str, Any]) -> dic
                     "keys": {"p256dh": s.p256dh, "auth": s.auth},
                 },
                 data=payload,
-                vapid_private_key=priv,  # ✅ base64url(DER) string (what py_vapid expects)
+                vapid_private_key=pem_path,  # ✅ path to PEM file (most compatible) :contentReference[oaicite:3]{index=3}
                 vapid_claims={"sub": settings.VAPID_SUBJECT},
                 ttl=60,
+                content_encoding="aes128gcm",
             )
             ok += 1
 
         except WebPushException as e:
             status_code = getattr(getattr(e, "response", None), "status_code", None)
             body = getattr(getattr(e, "response", None), "text", None)
-
             err = {
                 "endpoint": s.endpoint[:140],
                 "status_code": status_code,
                 "error": str(e),
-                "response_text": body[:300] if isinstance(body, str) else None,
+                "response_text": body[:400] if isinstance(body, str) else None,
             }
             errors.append(err)
             log.warning("WebPushException: %s", err)
 
-            # dead subscriptions
             if status_code in (404, 410):
                 to_delete.append(s.id)
 
