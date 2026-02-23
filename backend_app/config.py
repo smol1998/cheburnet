@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     VAPID_PUBLIC_KEY_B64URL: str | None = None
     VAPID_SUBJECT: str = "mailto:admin@example.com"
 
-    @field_validator("VAPID_PRIVATE_KEY_PEM", mode="before")
+    @field_validator("VAPID_PRIVATE_KEY_PEM_B64", mode="before")
     @classmethod
     def _vapid_priv_norm(cls, v: Any) -> Any:
         return _norm_multiline_env(v)
