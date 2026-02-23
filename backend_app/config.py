@@ -53,8 +53,9 @@ class Settings(BaseSettings):
     # =========================
     # VAPID (Web Push)
     # =========================
-    # Приватный ключ ожидается как base64/base64url от PEM (одной строкой).
-    # (PEM напрямую тоже переживём на стороне push.py, но тут мы всё равно "ужимаем" как B64.)
+    # Можно хранить:
+    # - PEM напрямую (multiline)
+    # - либо base64/base64url(PEM) одной строкой
     VAPID_PRIVATE_KEY_PEM_B64: str | None = None
     VAPID_PUBLIC_KEY_B64URL: str | None = None
     VAPID_SUBJECT: str = "mailto:admin@example.com"
@@ -63,9 +64,11 @@ class Settings(BaseSettings):
     @classmethod
     def _vapid_priv_b64_norm(cls, v: Any) -> Any:
         """
-        Для B64 ключа:
-        - убираем пробелы/переносы строк (часто env/CI добавляют)
-        - убираем литералы '\\n'/'\\r\\n' если кто-то вставил с экранированием
+        Если это PEM (с -----BEGIN/-----END) — НЕ вырезаем пробелы/переносы,
+        иначе ломается заголовок "PRIVATE KEY" -> "PRIVATEKEY".
+        Только нормализуем экранированные \\n.
+
+        Если это base64/base64url — ужимаем в одну строку (без пробелов/переносов).
         """
         if v is None:
             return None
@@ -73,13 +76,14 @@ class Settings(BaseSettings):
             v = str(v)
         s = v.strip()
 
-        # На случай если кто-то запихнул base64 с экранированными переносами
-        s = s.replace("\\r\\n", "").replace("\\n", "")
-        # На случай реальных переносов в env
-        s = s.replace("\r", "").replace("\n", "")
-        # И просто все пробельные символы
-        s = "".join(s.split())
+        # ✅ PEM напрямую — сохраняем формат
+        if "-----BEGIN" in s and "-----END" in s:
+            return _norm_multiline_env(s)
 
+        # ✅ иначе base64/base64url — ужимаем
+        s = s.replace("\\r\\n", "").replace("\\n", "")
+        s = s.replace("\r", "").replace("\n", "")
+        s = "".join(s.split())
         return s or None
 
     @field_validator("VAPID_PUBLIC_KEY_B64URL", mode="before")
