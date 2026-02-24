@@ -473,6 +473,290 @@ function _sleep(ms) {
 }
 
 /* =========================
+   ✅ Telegram-like URL sync
+   ========================= */
+
+function getChatIdFromUrl() {
+  try {
+    const url = new URL(location.href);
+    const v = url.searchParams.get("chat");
+    return normChatId(v);
+  } catch (_) {
+    return null;
+  }
+}
+
+function setChatIdToUrl(chatId) {
+  const cid = normChatId(chatId);
+  try {
+    const url = new URL(location.href);
+    if (cid) url.searchParams.set("chat", String(cid));
+    else url.searchParams.delete("chat");
+    history.replaceState({}, "", url.toString());
+  } catch (_) {}
+}
+
+/* =========================
+   ✅ Telegram Web style in-app toast (foreground push)
+   ========================= */
+
+let _toastRoot = null;
+let _toastStyleInstalled = false;
+let _toastItems = []; // {id, el, t}
+
+function installToastStyle() {
+  if (_toastStyleInstalled) return;
+  _toastStyleInstalled = true;
+
+  const css = `
+.tgToastRoot{
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  top: 10px;
+  z-index: 99999;
+  display:flex;
+  flex-direction:column;
+  gap: 10px;
+  pointer-events:none;
+}
+@media (min-width: 980px){
+  .tgToastRoot{ left:auto; right: 16px; width: 360px; }
+}
+.tgToast{
+  pointer-events:auto;
+  display:flex;
+  gap: 10px;
+  align-items:center;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(20,20,20,.88);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 18px 42px rgba(0,0,0,.45);
+  transform: translateY(-6px);
+  opacity: 0;
+  transition: transform .18s ease, opacity .18s ease;
+}
+.tgToast.show{ transform: translateY(0); opacity: 1; }
+.tgToastAv{
+  width: 38px; height: 38px;
+  border-radius: 999px;
+  overflow:hidden;
+  flex: 0 0 auto;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+}
+.tgToastAv img{ width:100%; height:100%; object-fit:cover; display:block; }
+.tgToastBody{ min-width:0; flex:1 1 auto; display:flex; flex-direction:column; gap:2px; }
+.tgToastTitle{
+  font-weight: 900;
+  font-size: 13px;
+  color: rgba(255,255,255,.92);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.tgToastText{
+  font-size: 12px;
+  color: rgba(255,255,255,.72);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.tgToastClose{
+  flex:0 0 auto;
+  width: 32px; height: 32px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.75);
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  transition: filter .12s ease, transform .12s ease;
+}
+.tgToastClose:hover{ filter: brightness(1.08); transform: translateY(-1px); }
+`.trim();
+
+  const st = document.createElement("style");
+  st.id = "tgToastStyleV1";
+  st.textContent = css;
+  document.head.appendChild(st);
+}
+
+function ensureToastRoot() {
+  if (_toastRoot) return _toastRoot;
+  installToastStyle();
+  _toastRoot = mk("div", { class: "tgToastRoot", id: "tgToastRoot" });
+  document.body.appendChild(_toastRoot);
+  return _toastRoot;
+}
+
+function showInAppToast({ chatId, title, body, avatarIconUrl }) {
+  // Telegram: показываем toast только когда приложение реально видно
+  if (document.visibilityState !== "visible") return;
+
+  const cid = normChatId(chatId);
+
+  const root = ensureToastRoot();
+  const toastId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+  const av = mk("div", { class: "tgToastAv" });
+  if (avatarIconUrl) {
+    const img = mk("img", { src: avatarIconUrl, alt: "avatar" });
+    img.addEventListener("error", () => {
+      clearNode(av);
+      av.appendChild(mk("span", { text: "👤", style: "opacity:.65;font-weight:900;" }));
+    });
+    av.appendChild(img);
+  } else {
+    av.appendChild(mk("span", { text: "👤", style: "opacity:.65;font-weight:900;" }));
+  }
+
+  const tTitle = mk("div", { class: "tgToastTitle", text: String(title || "Новое сообщение") });
+  const tText = mk("div", { class: "tgToastText", text: String(body || "") });
+
+  const bodyEl = mk("div", { class: "tgToastBody" }, [tTitle, tText]);
+
+  const closeBtn = mk("button", {
+    class: "tgToastClose",
+    type: "button",
+    text: "×",
+    onclick: (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      removeToast(toastId);
+    },
+  });
+
+  const toast = mk(
+    "div",
+    {
+      class: "tgToast",
+      dataset: { tid: toastId, chatid: cid || "" },
+      onclick: () => {
+        // click opens chat (Telegram-like)
+        if (cid) {
+          const other = otherByChatId.get(cid);
+          if (other && other.id) {
+            openChat(cid, other.id, other.username || "");
+          } else {
+            // fallback: just set url; boot/loadDialogs will reconcile
+            setChatIdToUrl(cid);
+            setTab("chats");
+          }
+        }
+        removeToast(toastId);
+      },
+    },
+    [av, bodyEl, closeBtn]
+  );
+
+  // keep max 3 toasts
+  while (_toastItems.length >= 3) {
+    const old = _toastItems.shift();
+    if (old) {
+      try {
+        old.el && old.el.remove();
+      } catch (_) {}
+      try {
+        old.t && clearTimeout(old.t);
+      } catch (_) {}
+    }
+  }
+
+  root.insertBefore(toast, root.firstChild);
+  requestAnimationFrame(() => toast.classList.add("show"));
+
+  const t = setTimeout(() => removeToast(toastId), 4200);
+  _toastItems.unshift({ id: toastId, el: toast, t });
+}
+
+function removeToast(toastId) {
+  const i = _toastItems.findIndex((x) => x.id === toastId);
+  if (i >= 0) {
+    const it = _toastItems[i];
+    _toastItems.splice(i, 1);
+    try {
+      it.t && clearTimeout(it.t);
+    } catch (_) {}
+    try {
+      it.el.classList.remove("show");
+      setTimeout(() => {
+        try {
+          it.el && it.el.remove();
+        } catch (_) {}
+      }, 200);
+    } catch (_) {}
+  } else {
+    // just in case
+    const el = document.querySelector(`.tgToast[data-tid="${toastId}"]`);
+    if (el) {
+      try {
+        el.remove();
+      } catch (_) {}
+    }
+  }
+}
+
+/* =========================
+   ✅ Foreground push: listen SW postMessage (Telegram Web)
+   ========================= */
+
+let _swMsgBound = false;
+
+function bindServiceWorkerMessages() {
+  if (_swMsgBound) return;
+  _swMsgBound = true;
+  if (!("serviceWorker" in navigator)) return;
+
+  navigator.serviceWorker.addEventListener("message", (ev) => {
+    const msg = ev && ev.data ? ev.data : null;
+    if (!msg) return;
+
+    if (msg.type === "push:foreground") {
+      const d = msg.data || {};
+      const cid = normChatId(d.chat_id ?? d.chatId);
+
+      const title =
+        String(d.title || "").trim() ||
+        String(d.sender_display || "").trim() ||
+        (d.sender_username ? `@${String(d.sender_username).trim()}` : "Новое сообщение");
+
+      const body = String(d.body || d.text || "Откройте чат").trim();
+
+      // icon for toast can be AUTH'ed (query_token) because it loads in-page
+      let avatarIconUrl = String(d.avatar_icon_url || d.icon || "").trim();
+      if (!avatarIconUrl) {
+        // if backend sends avatar_file_id sometimes (optional), support it
+        const fid = d.avatar_file_id || d.sender_avatar_file_id || null;
+        if (fid) avatarIconUrl = fileUrl(`/files/${fid}`, fid);
+      }
+
+      showInAppToast({ chatId: cid, title, body, avatarIconUrl });
+
+      // Update state similar to Telegram:
+      // - if current chat visible: refresh + mark read
+      // - else: set unread + ensure dialog exists
+      if (cid && token) {
+        if (currentChatId === cid && isDialogVisible(cid)) {
+          pollOnce().catch(() => {});
+          maybeMarkRead().catch(() => {});
+        } else {
+          setUnread(cid, true);
+          scheduleDialogsReload();
+        }
+      }
+    }
+  });
+}
+
+/* =========================
    ✅ PER-USER persistence keys
    ========================= */
 
@@ -2544,6 +2828,9 @@ async function openChat(chatId, otherId, title) {
   nextBeforeId = null;
   otherLastRead = 0;
 
+  // ✅ Telegram: keep URL synced with current chat (for notification click / refresh)
+  setChatIdToUrl(cid);
+
   _otherOnline = false;
   _isTyping = false;
   setOnlineUI(false);
@@ -2994,6 +3281,9 @@ function installRuntimeDither() {
   installDialogsStyle();
   installProfileButtonFX();
 
+  // ✅ Telegram push: receive SW foreground messages
+  bindServiceWorkerMessages();
+
   fillYears();
   bindAvatarPreviews();
   bindUI();
@@ -3009,6 +3299,25 @@ function installRuntimeDither() {
 
       connectWS();
       await loadDialogs();
+
+      // ✅ Telegram: auto-open chat from ?chat=...
+      const qChat = getChatIdFromUrl();
+      if (qChat) {
+        // go to chats tab for mobile UX
+        setTab("chats");
+        const other = otherByChatId.get(qChat);
+        if (other && other.id) {
+          openChat(qChat, other.id, other.username || "");
+        } else {
+          // if dialog not yet present, try reload once and retry quickly
+          loadDialogs({ silent: true })
+            .then(() => {
+              const other2 = otherByChatId.get(qChat);
+              if (other2 && other2.id) openChat(qChat, other2.id, other2.username || "");
+            })
+            .catch(() => {});
+        }
+      }
 
       // 👇 можно попробовать тихо (если разрешение уже granted)
       ensureWebPushSubscribed();
