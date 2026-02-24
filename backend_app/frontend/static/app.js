@@ -1600,11 +1600,35 @@ function _setVoiceDraft(blob, durationMs, bars) {
   const url = URL.createObjectURL(blob);
   voiceDraft = { blob, url, durationMs, waveform: bars };
 
-  if (voicePreview) voicePreview.classList.remove("isHidden");
+  _showVoicePreviewSoft();
   if (vpTime) vpTime.textContent = _fmtDur(durationMs);
   _drawWave(vpWave, bars, 0);
 
   _setupPreviewPlayer();
+}
+
+function _hideVoicePreviewHard() {
+  if (!voicePreview) return;
+  // Prevent one-frame flashes when layout toggles (send/mic visibility changes)
+  voicePreview.classList.add("isHidden");
+  try {
+    voicePreview.style.opacity = "0";
+    voicePreview.style.visibility = "hidden";
+    voicePreview.style.pointerEvents = "none";
+    voicePreview.style.transform = "translateY(6px)";
+  } catch (_) {}
+}
+
+function _showVoicePreviewSoft() {
+  if (!voicePreview) return;
+  // Restore styles after hard-hide
+  voicePreview.classList.remove("isHidden");
+  try {
+    voicePreview.style.opacity = "";
+    voicePreview.style.visibility = "";
+    voicePreview.style.pointerEvents = "";
+    voicePreview.style.transform = "";
+  } catch (_) {}
 }
 
 function _clearVoiceDraft() {
@@ -1615,7 +1639,7 @@ function _clearVoiceDraft() {
 
   _teardownPreviewPlayer();
 
-  if (voicePreview) voicePreview.classList.add("isHidden");
+  _hideVoicePreviewHard();
   if (vpTime) vpTime.textContent = "0:00";
   _drawWave(vpWave, [], 0);
 }
@@ -1725,6 +1749,8 @@ async function _sendVoiceBlobDirect(blob, durationMs, bars) {
   } catch (e) {
     isSending = false;
     disableSend(false);
+    _showVoicePreviewSoft();
+    _setupPreviewPlayer();
     try { if (vpProgress) { vpProgress.classList.remove("show"); vpProgress.textContent = ""; } } catch (_) {}
     alert("Voice upload failed: " + String(e && e.message ? e.message : e));
     return;
@@ -1761,6 +1787,10 @@ async function sendVoiceDraft() {
   if (!currentChatId) return alert("Select dialog");
   if (!me) return alert("Login first");
   if (!voiceDraft?.blob) return;
+
+  // Hide preview immediately to avoid any under-composer flash
+  _hideVoicePreviewHard();
+  _teardownPreviewPlayer();
 
   if (isSending) return;
   isSending = true;
@@ -1803,6 +1833,8 @@ async function sendVoiceDraft() {
   } catch (e) {
     isSending = false;
     disableSend(false);
+    _showVoicePreviewSoft();
+    _setupPreviewPlayer();
     try { if (vpProgress) { vpProgress.classList.remove("show"); vpProgress.textContent = ""; } } catch (_) {}
     alert("Send failed: network/timeout");
     return;

@@ -283,7 +283,7 @@
 
     .tabs{
       display:flex;
-      gap:8px;
+      gap:10px;
       background:rgba(255,255,255,.05);
       border:1px solid rgba(255,255,255,.12);
       padding:6px;
@@ -584,6 +584,8 @@
     .input{
       width:100%;
       height:var(--inputH);
+      min-height: var(--inputH);
+      max-height: var(--inputH);
       border-radius:12px;
       background:rgba(0,0,0,.18);
       border:1px solid rgba(255,255,255,.12);
@@ -1029,26 +1031,32 @@
 
     /* composer */
     .composer{
-      padding:6px 10px;
+      /* фиксированная высота как в Telegram: не зависит от текста */
+      height: 52px;
+      padding: 6px 10px;
+
       border-top:1px solid rgba(255,255,255,.10);
       display:grid;
       grid-template-columns: 1fr auto auto;
       gap:8px;
       align-items:center;
+
       background:rgba(255,255,255,.02);
       backdrop-filter: blur(18px);
       -webkit-backdrop-filter: blur(18px);
+
       position:relative;
       z-index:3;
-
       flex: 0 0 auto;
 
-      transition: padding-bottom .24s ease, box-shadow .24s ease, border-color .24s ease;
-      will-change: padding-bottom;
+      transition: transform .18s ease, box-shadow .22s ease, border-color .22s ease, height .18s ease;
+      will-change: transform, height;
     }
 
+    /* лёгкая “активация” при фокусе: чуть выше и чуть больше */
     .chat.kbdFocus .composer{
-      padding-bottom: calc(10px + var(--lift));
+      height: 58px;
+      transform: translateY(-2px);
       box-shadow: 0 22px 60px rgba(0,0,0,.50);
       border-top-color: rgba(255,255,255,.14);
     }
@@ -1349,7 +1357,7 @@
     .voicePreview{
       position:fixed;
       right:18px;
-      bottom:86px; /* above composer */
+      bottom: calc(14px + var(--sab) + var(--kb) + 52px + 14px + var(--lift)); /* above composer, stable */
       width:min(420px, calc(100% - 36px));
       padding:10px 12px;
       border-radius: 16px;
@@ -1364,7 +1372,8 @@
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
     }
-    .voicePreview.isHidden{ display:none; }
+    .voicePreview.isHidden{ opacity:0; visibility:hidden; pointer-events:none; transform: translateY(6px); }
+    .voicePreview{ opacity:1; visibility:visible; transform: translateY(0); transition: opacity .14s ease, transform .14s ease; }
 
     .vpRight{
       display:flex;
@@ -1374,25 +1383,32 @@
     }
 
     .vpBtn{
-      height:30px;
-      border-radius:12px;
-      padding:0 12px;
-      border:1px solid rgba(255,255,255,.14);
+      width: 44px;
+      height: 40px;
+      border-radius: 16px;
+      padding: 0;
+      border: 1px solid rgba(255,255,255,.14);
       background: rgba(255,255,255,.06);
-      color: var(--text);
-      font-weight:800;
-      cursor:pointer;
-      white-space:nowrap;
+      color: rgba(255,255,255,.92);
+      font-weight: 900;
+      cursor: pointer;
+      display:flex;
+      align-items:center;
+      justify-content:center;
       line-height:1;
+      transition: transform .12s ease, filter .16s ease, background .16s ease, border-color .16s ease;
+      touch-action: manipulation;
+      user-select:none;
     }
+    .vpBtn:active{ transform: translateY(1px); }
     .vpBtn.danger{
-      border-color: rgba(255,80,80,.35);
-      background: rgba(255,80,80,.12);
+      border-color: rgba(255, 80, 80, .46);
+      background: rgba(255, 80, 80, .20);
     }
     .vpBtn.accent{
-      border-color: rgba(209,254,23,.45);
-      background: rgba(209,254,23,.16);
-      color: rgba(255,255,255,.95);
+      border-color: rgba(66, 198, 104, .55);
+      background: rgba(66, 198, 104, .22);
+      color: rgba(255,255,255,.96);
     }
 
     .vpProgress{
@@ -1692,8 +1708,8 @@
                 <div class="vpProgress" id="vpProgress"></div>
               </div>
               <div class="vpRight">
-                <button class="vpBtn danger" id="vpCancel" type="button">Отмена</button>
-                <button class="vpBtn accent" id="vpSend" type="button">Отправить</button>
+                <button class="vpBtn danger" id="vpCancel" type="button" aria-label="Удалить">✕</button>
+                <button class="vpBtn accent" id="vpSend" type="button" aria-label="Отправить">➤</button>
               </div>
             </div>
 
@@ -1813,6 +1829,6 @@
 
   </div>
 
-  <script src="/static/app.js?v=8004"></script>
+  <script src="/static/app.js?v=8002"></script>
 </body>
 </html>
