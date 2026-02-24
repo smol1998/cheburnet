@@ -20,5 +20,3 @@ py-vapid==1.9.2
 cryptography==42.0.8
 
 
-
-

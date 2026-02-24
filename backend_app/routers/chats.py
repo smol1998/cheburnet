@@ -59,15 +59,34 @@ def msg_to_dict(db: Session, m: models.Message):
         .filter(models.MessageAttachment.message_id == m.id)
         .all()
     )
+
+    file_ids = [f.id for f in attaches]
+    voice_map: dict[int, models.VoiceMeta] = {}
+    if file_ids:
+        for vm in db.query(models.VoiceMeta).filter(models.VoiceMeta.file_id.in_(file_ids)).all():
+            voice_map[vm.file_id] = vm
+
+    out_atts = []
+    for f in attaches:
+        vm = voice_map.get(f.id)
+        out_atts.append(
+            {
+                "id": f.id,
+                "mime": f.mime,
+                "name": f.original_name,
+                "url": f"/files/{f.id}",
+                "kind": ("voice" if (vm is not None) else "file"),
+                "duration_ms": (vm.duration_ms if vm is not None else None),
+                "waveform": (vm.waveform_json if vm is not None else None),
+            }
+        )
+
     return {
         "id": m.id,
         "sender_id": m.sender_id,
         "text": m.text,
         "created_at": m.created_at.isoformat(),
-        "attachments": [
-            {"id": f.id, "mime": f.mime, "name": f.original_name, "url": f"/files/{f.id}"}
-            for f in attaches
-        ],
+        "attachments": out_atts,
     }
 
 

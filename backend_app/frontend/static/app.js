@@ -286,6 +286,15 @@ const btnLogin = document.getElementById("btnLogin");
 const btnFind = document.getElementById("btnFind");
 const btnReloadDialogs = document.getElementById("btnReloadDialogs");
 const btnSend = document.getElementById("btnSend");
+const btnMic = document.getElementById("btnMic");
+
+// Voice preview DOM
+const voicePreview = document.getElementById("voicePreview");
+const vpPlay = document.getElementById("vpPlay");
+const vpWave = document.getElementById("vpWave");
+const vpTime = document.getElementById("vpTime");
+const vpCancel = document.getElementById("vpCancel");
+const vpSend = document.getElementById("vpSend");
 
 const btnBack = document.getElementById("btnBack");
 
@@ -1220,23 +1229,521 @@ function scheduleDialogsReload() {
    Telegram-like Send visibility
    ========================= */
 
+let voiceDraft = null; // {blob, url, durationMs, waveform:Array<number>}
+
+function hasVoiceDraft() {
+  return !!(voiceDraft && voiceDraft.blob);
+}
+
 function hasComposerContent() {
   const t = text && text.value ? text.value.trim() : "";
   const hasText = !!t;
   const hasFile = !!(file && file.files && file.files[0]);
-  return hasText || hasFile;
+  return hasText || hasFile || hasVoiceDraft();
 }
 
 function updateSendVisibility() {
-  if (!btnSend) return;
-  const show = hasComposerContent();
-  btnSend.classList.toggle("isHidden", !show);
+  if (btnSend) {
+    const showSend = hasComposerContent();
+    btnSend.classList.toggle("isHidden", !showSend);
+  }
+
+  // Telegram-like: show mic only when nothing to send
+  if (btnMic) {
+    const showMic = !hasComposerContent();
+    btnMic.classList.toggle("isHidden", !showMic);
+  }
 }
 
 function disableSend(disabled) {
   if (!btnSend) return;
   btnSend.disabled = !!disabled;
   btnSend.style.opacity = disabled ? "0.7" : "";
+}
+
+
+/* =========================
+   Voice messages
+   ========================= */
+
+function _fmtDur(ms) {
+  const s = Math.max(0, Math.floor((ms || 0) / 1000));
+  const m = Math.floor(s / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return `${m}:${ss}`;
+}
+
+function _safeJsonParse(s) {
+  try { return JSON.parse(s); } catch (_) { return null; }
+}
+
+function _drawWave(canvas, bars, progress01 = 0) {
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const arr = Array.isArray(bars) ? bars : [];
+  const n = Math.max(1, Math.min(arr.length || 0, 256));
+  const step = w / n;
+  const mid = h / 2;
+
+  const base = "rgba(255,255,255,.40)";
+  const hi = "rgba(209,254,23,.80)";
+
+  for (let i = 0; i < n; i++) {
+    const v = Math.max(0.02, Math.min(1, Number(arr[i] ?? 0.2)));
+    const x = i * step + step * 0.5;
+    const barH = v * (h - 4);
+    const y1 = mid - barH / 2;
+    const y2 = mid + barH / 2;
+
+    const p = i / (n - 1);
+    ctx.strokeStyle = p <= progress01 ? hi : base;
+    ctx.lineWidth = Math.max(1, step * 0.65);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(x, y1);
+    ctx.lineTo(x, y2);
+    ctx.stroke();
+  }
+}
+
+function _ensureRecOverlay() {
+  let el = document.getElementById("recOverlay");
+  if (el) return el;
+
+  el = document.createElement("div");
+  el.id = "recOverlay";
+  el.className = "recOverlay";
+  el.innerHTML = `
+    <div class="recDot"></div>
+    <div class="recText" id="recOverlayTime">0:00</div>
+    <div class="recHint" id="recOverlayHint">← отмена · ↑ <span class="recLock">lock</span></div>
+  `;
+  document.body.appendChild(el);
+  return el;
+}
+
+function _showRecOverlay(show) {
+  const el = _ensureRecOverlay();
+  el.classList.toggle("show", !!show);
+}
+
+function _setRecOverlay(timeText, hintText) {
+  const t = document.getElementById("recOverlayTime");
+  const h = document.getElementById("recOverlayHint");
+  if (t && timeText != null) t.textContent = timeText;
+  if (h && hintText != null) h.innerHTML = hintText;
+}
+
+let _rec = {
+  active: false,
+  locked: false,
+  cancelled: false,
+  stream: null,
+  mediaRecorder: null,
+  chunks: [],
+  startedAt: 0,
+  bars: [],
+  raf: 0,
+  pointerId: null,
+  startX: 0,
+  startY: 0,
+  dx: 0,
+  dy: 0,
+};
+
+async function _getBestAudioMime() {
+  const prefs = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/ogg",
+  ];
+  if (!window.MediaRecorder) return "";
+  for (const t of prefs) {
+    if (MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return "";
+}
+
+async function _startRecording(pointerEvent) {
+  if (_rec.active) return;
+  if (!token || !currentChatId) return;
+
+  // stop file draft if any
+  clearSelectedFileUI();
+
+  // stop voice draft if any
+  _clearVoiceDraft();
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    alert("Нет доступа к микрофону");
+    return;
+  }
+
+  const mime = await _getBestAudioMime();
+  const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+
+  _rec.active = true;
+  _rec.locked = false;
+  _rec.cancelled = false;
+  _rec.stream = stream;
+  _rec.mediaRecorder = mr;
+  _rec.chunks = [];
+  _rec.startedAt = Date.now();
+  _rec.bars = [];
+  _rec.pointerId = pointerEvent?.pointerId ?? null;
+  _rec.startX = pointerEvent?.clientX ?? 0;
+  _rec.startY = pointerEvent?.clientY ?? 0;
+  _rec.dx = 0;
+  _rec.dy = 0;
+
+  // live waveform via analyser
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  let ctx = null;
+  let analyser = null;
+  let dataArr = null;
+
+  try {
+    ctx = new AudioCtx();
+    const src = ctx.createMediaStreamSource(stream);
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    src.connect(analyser);
+    dataArr = new Uint8Array(analyser.fftSize);
+  } catch (_) {}
+
+  const tick = () => {
+    if (!_rec.active) return;
+
+    const ms = Date.now() - _rec.startedAt;
+    _setRecOverlay(_fmtDur(ms), _rec.locked ? "🔒 запись… (нажми отправить)" : "← отмена · ↑ <span class=\"recLock\">lock</span>");
+
+    // sample amplitude
+    if (analyser && dataArr) {
+      analyser.getByteTimeDomainData(dataArr);
+      let sum = 0;
+      for (let i = 0; i < dataArr.length; i++) {
+        const v = (dataArr[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / dataArr.length);
+      _rec.bars.push(Math.min(1, Math.max(0.04, rms * 2.2)));
+      if (_rec.bars.length > 120) _rec.bars.shift();
+    } else {
+      // fallback: animate
+      _rec.bars.push(0.22 + Math.random() * 0.28);
+      if (_rec.bars.length > 120) _rec.bars.shift();
+    }
+
+    _rec.raf = requestAnimationFrame(tick);
+  };
+
+  mr.ondataavailable = (e) => {
+    if (e.data && e.data.size) _rec.chunks.push(e.data);
+  };
+
+  mr.onstop = async () => {
+    try {
+      if (ctx) await ctx.close();
+    } catch (_) {}
+
+    _stopTracks(_rec.stream);
+    _rec.stream = null;
+
+    const wasCancelled = _rec.cancelled;
+    const durationMs = Date.now() - _rec.startedAt;
+    const bars = _downsampleBars(_rec.bars, 64);
+
+    _rec.active = false;
+    _rec.locked = false;
+    _rec.mediaRecorder = null;
+    cancelAnimationFrame(_rec.raf);
+    _rec.raf = 0;
+    _showRecOverlay(false);
+
+    if (wasCancelled) {
+      _clearVoiceDraft();
+      updateSendVisibility();
+      return;
+    }
+
+    const blob = new Blob(_rec.chunks, { type: mr.mimeType || "audio/webm" });
+    _rec.chunks = [];
+
+    _setVoiceDraft(blob, durationMs, bars);
+    updateSendVisibility();
+  };
+
+  mr.start(120); // chunk every ~120ms
+  _showRecOverlay(true);
+  tick();
+
+  // prevent accidental focus on input while recording
+  if (text) text.blur();
+}
+
+function _stopTracks(stream) {
+  try {
+    if (!stream) return;
+    for (const t of stream.getTracks()) t.stop();
+  } catch (_) {}
+}
+
+function _downsampleBars(bars, n = 64) {
+  const arr = Array.isArray(bars) ? bars.slice() : [];
+  if (!arr.length) return [];
+  if (arr.length <= n) return arr;
+
+  const out = [];
+  const step = arr.length / n;
+  for (let i = 0; i < n; i++) {
+    const a = Math.floor(i * step);
+    const b = Math.floor((i + 1) * step);
+    let mx = 0;
+    for (let j = a; j < b; j++) mx = Math.max(mx, arr[j] || 0);
+    out.push(mx);
+  }
+  return out;
+}
+
+function _cancelRecording() {
+  if (!_rec.active) return;
+  _rec.cancelled = true;
+  try {
+    _rec.mediaRecorder?.stop();
+  } catch (_) {}
+}
+
+function _finishRecording() {
+  if (!_rec.active) return;
+  try {
+    _rec.mediaRecorder?.stop();
+  } catch (_) {}
+}
+
+function _lockRecording() {
+  if (!_rec.active) return;
+  _rec.locked = true;
+  _setRecOverlay(_fmtDur(Date.now() - _rec.startedAt), "🔒 запись… (нажми отправить)");
+}
+
+function _setVoiceDraft(blob, durationMs, bars) {
+  _clearVoiceDraft();
+  const url = URL.createObjectURL(blob);
+  voiceDraft = { blob, url, durationMs, waveform: bars };
+
+  if (voicePreview) voicePreview.classList.remove("isHidden");
+  if (vpTime) vpTime.textContent = _fmtDur(durationMs);
+  _drawWave(vpWave, bars, 0);
+
+  _setupPreviewPlayer();
+}
+
+function _clearVoiceDraft() {
+  if (voiceDraft?.url) {
+    try { URL.revokeObjectURL(voiceDraft.url); } catch (_) {}
+  }
+  voiceDraft = null;
+
+  _teardownPreviewPlayer();
+
+  if (voicePreview) voicePreview.classList.add("isHidden");
+  if (vpTime) vpTime.textContent = "0:00";
+  _drawWave(vpWave, [], 0);
+}
+
+let _vpAudio = null;
+let _vpSpeed = 1.0;
+function _setupPreviewPlayer() {
+  _teardownPreviewPlayer();
+  if (!voiceDraft?.url) return;
+
+  _vpAudio = new Audio();
+  _vpAudio.preload = "metadata";
+  _vpAudio.src = voiceDraft.url;
+  _vpAudio.playbackRate = _vpSpeed;
+
+  const onTime = () => {
+    const p = _vpAudio && _vpAudio.duration ? (_vpAudio.currentTime / _vpAudio.duration) : 0;
+    _drawWave(vpWave, voiceDraft.waveform, p);
+    if (vpTime) {
+      const ms = Math.floor((_vpAudio.currentTime || 0) * 1000);
+      vpTime.textContent = `${_fmtDur(ms)} / ${_fmtDur(voiceDraft.durationMs)}`;
+    }
+  };
+
+  _vpAudio.addEventListener("timeupdate", onTime);
+  _vpAudio.addEventListener("ended", () => {
+    if (vpPlay) vpPlay.textContent = "▶";
+    _drawWave(vpWave, voiceDraft.waveform, 0);
+    if (vpTime) vpTime.textContent = _fmtDur(voiceDraft.durationMs);
+  });
+
+  if (vpPlay) {
+    vpPlay.onclick = async () => {
+      if (!_vpAudio) return;
+      if (_vpAudio.paused) {
+        try { await _vpAudio.play(); } catch (_) {}
+        vpPlay.textContent = "⏸";
+      } else {
+        _vpAudio.pause();
+        vpPlay.textContent = "▶";
+      }
+    };
+  }
+
+  if (vpCancel) vpCancel.onclick = () => { _clearVoiceDraft(); updateSendVisibility(); };
+  if (vpSend) vpSend.onclick = () => { sendVoiceDraft(); };
+}
+
+function _teardownPreviewPlayer() {
+  try {
+    if (_vpAudio) {
+      _vpAudio.pause();
+      _vpAudio.src = "";
+    }
+  } catch (_) {}
+  _vpAudio = null;
+  if (vpPlay) vpPlay.textContent = "▶";
+}
+
+async function uploadVoiceDraft() {
+  if (!voiceDraft?.blob) return null;
+
+  const form = new FormData();
+  const fname = "voice.webm";
+  form.append("file", voiceDraft.blob, fname);
+  form.append("duration_ms", String(Math.floor(voiceDraft.durationMs || 0)));
+  form.append("waveform", JSON.stringify(voiceDraft.waveform || []));
+
+  // show progress using existing UI button progress if you want; keep simple
+  const r = await fetchWithTimeout(API + "/files/voice", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token },
+    body: form,
+  }, 60000);
+
+  if (!r.ok) throw new Error(await readError(r));
+  return await r.json();
+}
+
+async function sendVoiceDraft() {
+  if (!token) return alert("Login first");
+  if (!currentChatId) return alert("Select dialog");
+  if (!me) return alert("Login first");
+  if (!voiceDraft?.blob) return;
+
+  if (isSending) return;
+  isSending = true;
+  disableSend(true);
+
+  let fileId = null;
+  try {
+    const up = await uploadVoiceDraft();
+    fileId = up?.file_id;
+  } catch (e) {
+    isSending = false;
+    disableSend(false);
+    alert("Voice upload failed: " + String(e && e.message ? e.message : e));
+    return;
+  }
+
+  try {
+    const r = await fetchWithTimeout(API + `/chats/dm/${currentChatId}/send`, {
+      method: "POST",
+      headers: authHeadersJson(),
+      body: JSON.stringify({ text: null, file_ids: [fileId] }),
+    }, 60000);
+
+    isSending = false;
+    disableSend(false);
+
+    if (!r.ok) {
+      alert("Send failed: " + (await readError(r)));
+      return;
+    }
+
+    const msg = await r.json();
+    if (msg && msg.id && !document.querySelector(`.msg[data-message-id="${msg.id}"]`)) {
+      renderMessage(msg);
+    }
+    if (msg) updateDialogPreviewFromMessage(currentChatId, msg, { moveToTop: true });
+    await maybeMarkRead();
+  } catch (e) {
+    isSending = false;
+    disableSend(false);
+    alert("Send failed: network/timeout");
+    return;
+  }
+
+  _clearVoiceDraft();
+  updateSendVisibility();
+}
+
+/* Hold-to-record interactions (Telegram-like) */
+function _bindVoiceUI() {
+  if (!btnMic) return;
+
+  btnMic.addEventListener("pointerdown", async (e) => {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    btnMic.setPointerCapture?.(e.pointerId);
+    await _startRecording(e);
+  });
+
+  btnMic.addEventListener("pointermove", (e) => {
+    if (!_rec.active || _rec.locked) return;
+
+    const dx = (e.clientX ?? 0) - _rec.startX;
+    const dy = (e.clientY ?? 0) - _rec.startY;
+    _rec.dx = dx;
+    _rec.dy = dy;
+
+    if (dx < -90) {
+      _setRecOverlay(_fmtDur(Date.now() - _rec.startedAt), "❌ отмена");
+      _rec.cancelled = true;
+    } else if (dy < -90) {
+      _lockRecording();
+    } else {
+      _rec.cancelled = false;
+      _setRecOverlay(_fmtDur(Date.now() - _rec.startedAt), "← отмена · ↑ <span class=\"recLock\">lock</span>");
+    }
+  });
+
+  const finishFromPointer = (e) => {
+    if (!_rec.active) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (_rec.locked) {
+      // locked: keep recording, user will press send (vpSend) which triggers stop via pointerup? we need stop now and open preview
+      _finishRecording();
+      return;
+    }
+
+    if (_rec.cancelled) {
+      _cancelRecording();
+      return;
+    }
+
+    _finishRecording();
+  };
+
+  btnMic.addEventListener("pointerup", finishFromPointer);
+  btnMic.addEventListener("pointercancel", () => {
+    if (_rec.active) _cancelRecording();
+  });
 }
 
 /* =========================
@@ -2491,7 +2998,6 @@ async function search() {
     searchRes.appendChild(row);
   }
 }
-
 async function startDM(otherId, username) {
   const r = await fetch(API + "/chats/dm/start", {
     method: "POST",
@@ -2666,6 +3172,90 @@ function applyGroupingTail() {
   }
 }
 
+
+function _makeVoiceNode(att) {
+  const url = fileUrl(att.url, att.id || "");
+  const bars = _safeJsonParse(att.waveform) || [];
+
+  const wrap = mk("div", { class: "voiceBubble" });
+
+  const btn = mk("button", { class: "voicePlay", type: "button", text: "▶" });
+  const wave = mk("canvas", { class: "voiceWave", width: 180, height: 28 });
+  const meta = mk("div", { class: "voiceMeta" });
+  const dur = mk("div", { class: "voiceDur", text: _fmtDur(att.duration_ms || 0) });
+  const speed = mk("div", { class: "voiceSpeed", text: "1x" });
+  const prog = mk("div", { class: "voiceProgress" });
+  const bar = mk("i");
+  prog.appendChild(bar);
+
+  meta.appendChild(speed);
+  meta.appendChild(dur);
+
+  wrap.appendChild(btn);
+  wrap.appendChild(wave);
+  wrap.appendChild(meta);
+
+  const outer = mk("div");
+  outer.appendChild(wrap);
+  outer.appendChild(prog);
+
+  let audio = new Audio();
+  audio.preload = "metadata";
+  audio.src = url;
+  let rate = 1.0;
+
+  const setRate = (r) => {
+    rate = r;
+    audio.playbackRate = rate;
+    speed.textContent = rate === 1 ? "1x" : (rate === 1.5 ? "1.5x" : "2x");
+  };
+  setRate(1.0);
+
+  _drawWave(wave, bars, 0);
+
+  const update = () => {
+    const p = audio.duration ? (audio.currentTime / audio.duration) : 0;
+    bar.style.width = `${Math.max(0, Math.min(1, p)) * 100}%`;
+    _drawWave(wave, bars, p);
+  };
+
+  audio.addEventListener("timeupdate", update);
+  audio.addEventListener("ended", () => {
+    btn.textContent = "▶";
+    bar.style.width = "0%";
+    _drawWave(wave, bars, 0);
+  });
+
+  btn.addEventListener("click", async () => {
+    if (!audio) return;
+    if (audio.paused) {
+      try { await audio.play(); } catch (_) {}
+      btn.textContent = "⏸";
+    } else {
+      audio.pause();
+      btn.textContent = "▶";
+    }
+  });
+
+  speed.addEventListener("click", () => {
+    const next = rate === 1 ? 1.5 : (rate === 1.5 ? 2.0 : 1.0);
+    setRate(next);
+  });
+
+  // seek by clicking progress
+  prog.addEventListener("click", (e) => {
+    if (!audio.duration) return;
+    const r = prog.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const p = Math.max(0, Math.min(1, x / r.width));
+    audio.currentTime = audio.duration * p;
+    update();
+  });
+
+  return outer;
+}
+
+
 function renderAttachmentsNode(atts) {
   if (!atts || !atts.length) return null;
 
@@ -2673,6 +3263,12 @@ function renderAttachmentsNode(atts) {
 
   for (const a of atts) {
     const url = fileUrl(a.url, a.id || "");
+
+    // voice message
+    if (a.kind === "voice" || (a.mime && a.mime.startsWith("audio/"))) {
+      box.appendChild(_makeVoiceNode(a));
+      continue;
+    }
 
     if (a.mime && a.mime.startsWith("image/")) {
       const wrap = mk("div");
@@ -3002,6 +3598,12 @@ async function sendMessage() {
   if (!currentChatId) return alert("Select dialog");
   if (!me) return alert("Login first");
   if (isSending) return;
+
+  // voice draft has its own send flow
+  if (hasVoiceDraft()) {
+    await sendVoiceDraft();
+    return;
+  }
 
   const msgText = (text.value || "").trim();
   let fileIds = [];
@@ -3333,3 +3935,6 @@ function installRuntimeDither() {
 
   _assistantPaintToggle();
 })();
+
+// init voice UI
+try { _bindVoiceUI(); } catch (_) {}

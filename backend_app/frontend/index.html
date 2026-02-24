@@ -1311,6 +1311,147 @@
       .searchRow{ grid-template-columns:1fr 92px; }
       .authRow2{ grid-template-columns: 1fr; }
     }
+
+    /* === Voice messages === */
+    .micBtn{
+      height: var(--btnH);
+      width: var(--btnH);
+      border-radius: 999px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.06);
+      color: var(--text);
+      display:grid;
+      place-items:center;
+      cursor:pointer;
+      user-select:none;
+      -webkit-user-select:none;
+      touch-action:none;
+    }
+    .micBtn:active{ transform: scale(.98); }
+    .micBtn.isHidden{ display:none; }
+
+    .voicePreview{
+      width:100%;
+      margin-bottom:10px;
+      padding:10px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.06);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .voicePreview.isHidden{ display:none; }
+    .vpLeft{ display:flex;align-items:center;gap:10px;min-width:0;flex:1; }
+    .vpPlay{
+      height:34px;width:34px;border-radius:999px;
+      border:1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.20);
+      color: var(--text);
+      cursor:pointer;
+    }
+    .vpWave{ flex:1; min-width:120px; opacity:.9; }
+    .vpTime{ font-size:12px; color: var(--muted); width:44px; text-align:right; }
+
+    .vpRight{ display:flex; gap:8px; align-items:center; }
+    .vpBtn{
+      height:34px;
+      padding:0 12px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.04);
+      color: var(--text);
+      cursor:pointer;
+      font-weight:600;
+      font-size:13px;
+    }
+    .vpBtn.accent{
+      border-color: rgba(209,254,23,.25);
+      background: rgba(209,254,23,.14);
+      color: rgba(255,255,255,.95);
+    }
+    .vpBtn.ghost{
+      background: transparent;
+    }
+
+    /* Voice bubble in chat */
+    .voiceBubble{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:10px 12px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.06);
+      max-width: 360px;
+    }
+    .msg.me .voiceBubble{ background: rgba(255,255,255,.045); }
+    .voicePlay{
+      height:34px;width:34px;border-radius:999px;
+      border:1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.20);
+      color: var(--text);
+      cursor:pointer;
+      flex:0 0 auto;
+    }
+    .voiceWave{ width:180px; height:28px; flex:1 1 auto; }
+    .voiceMeta{ display:flex; flex-direction:column; gap:4px; min-width:64px; align-items:flex-end; }
+    .voiceDur{ font-size:12px; color: var(--muted); }
+    .voiceSpeed{
+      font-size:12px;
+      padding:2px 8px;
+      border-radius: 999px;
+      border:1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.16);
+      color: rgba(255,255,255,.86);
+      cursor:pointer;
+      user-select:none;
+      -webkit-user-select:none;
+    }
+    .voiceProgress{
+      height:3px;
+      border-radius:999px;
+      background: rgba(255,255,255,.14);
+      overflow:hidden;
+      margin-top:6px;
+    }
+    .voiceProgress > i{
+      display:block;
+      height:100%;
+      width:0%;
+      background: rgba(209,254,23,.65);
+    }
+
+    /* Recording overlay */
+    .recOverlay{
+      position:fixed;
+      left:50%;
+      bottom: calc(18px + var(--sab));
+      transform: translateX(-50%);
+      z-index: 50;
+      padding:10px 12px;
+      border-radius: 999px;
+      border:1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.55);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      display:flex;
+      gap:10px;
+      align-items:center;
+      pointer-events:none;
+      opacity:0;
+      transition: opacity .15s ease;
+    }
+    .recOverlay.show{ opacity:1; }
+    .recDot{
+      width:8px;height:8px;border-radius:999px;
+      background: #ff3b30;
+      box-shadow: 0 0 0 6px rgba(255,59,48,.16);
+    }
+    .recText{ font-size:13px; color: rgba(255,255,255,.92); white-space:nowrap; }
+    .recHint{ font-size:12px; color: rgba(255,255,255,.70); white-space:nowrap; }
+    .recLock{ font-weight:700; }
+
   </style>
 </head>
 
@@ -1432,6 +1573,18 @@
               </button>
             </div>
 
+            <div class="voicePreview isHidden" id="voicePreview">
+              <div class="vpLeft">
+                <button class="vpPlay" id="vpPlay" type="button" aria-label="Play/Pause">▶</button>
+                <canvas class="vpWave" id="vpWave" width="220" height="32"></canvas>
+                <div class="vpTime" id="vpTime">0:00</div>
+              </div>
+              <div class="vpRight">
+                <button class="vpBtn ghost" id="vpCancel" type="button">Отмена</button>
+                <button class="vpBtn accent" id="vpSend" type="button">Отправить</button>
+              </div>
+            </div>
+
             <div class="composerLeft">
               <input id="text" class="input" placeholder="Сообщение…" />
             </div>
@@ -1440,6 +1593,8 @@
               📎
               <input id="file" type="file" />
             </label>
+
+            <button class="micBtn" id="btnMic" type="button" aria-label="Voice message" title="Hold to record">🎤</button>
 
             <button class="sendIconBtn isHidden" id="btnSend" type="button" aria-label="Send">➤</button>
           </div>

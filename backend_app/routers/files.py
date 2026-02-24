@@ -1,7 +1,7 @@
 # backend_app/routers/files.py
 import os
 from io import BytesIO
-from fastapi import APIRouter, Depends, UploadFile, File as UpFile, HTTPException, Query, Header
+from fastapi import APIRouter, Depends, UploadFile, File as UpFile, HTTPException, Query, Header, Form, Request
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 
@@ -12,7 +12,7 @@ from backend_app.security import decode_token
 
 router = APIRouter()
 
-ALLOWED_PREFIXES = ("image/", "video/", "application/", "text/")
+ALLOWED_PREFIXES = ("image/", "video/", "audio/", "application/", "text/")
 
 
 def get_max_upload_bytes() -> int:
@@ -64,6 +64,57 @@ async def upload(
     db.refresh(rec)
 
     return {"file_id": rec.id, "mime": rec.mime, "name": rec.original_name, "size": rec.size}
+
+
+@router.post("/voice")
+async def upload_voice(
+    file: UploadFile = UpFile(...),
+    duration_ms: int = Form(0),
+    waveform: str | None = Form(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Upload voice message (audio/webm;codecs=opus recommended)."""
+    if not file.content_type or not file.content_type.startswith("audio/"):
+        raise HTTPException(400, "Unsupported voice type")
+
+    max_bytes = get_max_upload_bytes()
+
+    chunks: list[bytes] = []
+    size = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if max_bytes and size > max_bytes:
+            raise HTTPException(400, f"File too large (max {max_bytes // (1024*1024)}MB)")
+        chunks.append(chunk)
+
+    data = b"".join(chunks)
+
+    rec = models.File(
+        owner_id=user.id,
+        original_name=file.filename or "voice.webm",
+        mime=file.content_type or "audio/webm",
+        size=size,
+        data=data,
+        path=None,
+    )
+    db.add(rec)
+    db.commit()
+    db.refresh(rec)
+
+    meta = models.VoiceMeta(
+        file_id=rec.id,
+        duration_ms=int(duration_ms or 0),
+        waveform_json=waveform,
+        codec=(file.content_type or "")[:64],
+    )
+    db.add(meta)
+    db.commit()
+
+    return {"file_id": rec.id, "mime": rec.mime, "name": rec.original_name, "size": rec.size, "duration_ms": meta.duration_ms, "waveform": meta.waveform_json}
 
 
 def _extract_user_id_from_token(db: Session, token: str) -> int:
@@ -135,8 +186,10 @@ def user_can_access_file(db: Session, user_id: int, file_id: int) -> bool:
 @router.get("/{file_id}")
 def download(
     file_id: int,
+    request: Request,
     token: str | None = Query(default=None),
     authorization: str | None = Header(default=None),
+    range: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
     """
@@ -153,7 +206,7 @@ def download(
     # <img> иногда грузится без токена (кэш/переоткрытие/внешний домен).
     # Поэтому если файл является аватаром — отдаем без авторизации.
     if _is_avatar_file(db, file_id):
-        return _stream_file(rec)
+        return _stream_file(rec, request, range)
 
     # иначе — нужен токен
     user_id = _get_user_id_from_request(db, token, authorization)
@@ -163,10 +216,10 @@ def download(
     if not user_can_access_file(db, user_id, file_id):
         raise HTTPException(403, "Forbidden")
 
-    return _stream_file(rec)
+    return _stream_file(rec, request, range)
 
 
-def _stream_file(rec: models.File):
+def _stream_file(rec: models.File, request: Request, range_header: str | None):
     """
     Отдаём либо bytes из БД (StreamingResponse),
     либо файл с диска (FileResponse) если вдруг path используется.
@@ -174,12 +227,39 @@ def _stream_file(rec: models.File):
     headers = {
         "Content-Disposition": f'inline; filename="{rec.original_name or "file"}"',
         "Cache-Control": "no-store",  # ✅ чтобы аватарки не залипали в кэше
+        "Accept-Ranges": "bytes",
     }
 
     # 1) bytes в БД
     if getattr(rec, "data", None):
-        bio = BytesIO(rec.data or b"")
-        return StreamingResponse(bio, media_type=rec.mime or "application/octet-stream", headers=headers)
+        data = rec.data or b""
+        total = len(data)
+
+        # Range requests (needed for streaming audio/video)
+        if range_header and range_header.startswith("bytes="):
+            try:
+                spec = range_header.split("=", 1)[1].strip()
+                start_s, end_s = (spec.split("-", 1) + [""])[:2]
+                start = int(start_s) if start_s else 0
+                end = int(end_s) if end_s else (total - 1)
+                if start < 0:
+                    start = 0
+                if end >= total:
+                    end = total - 1
+                if end < start:
+                    raise ValueError("bad range")
+            except Exception:
+                # invalid range
+                raise HTTPException(416, "Invalid Range")
+
+            chunk = data[start : end + 1]
+            headers2 = dict(headers)
+            headers2["Content-Range"] = f"bytes {start}-{end}/{total}"
+            headers2["Content-Length"] = str(len(chunk))
+            return StreamingResponse(BytesIO(chunk), media_type=rec.mime or "application/octet-stream", headers=headers2, status_code=206)
+
+        headers["Content-Length"] = str(total)
+        return StreamingResponse(BytesIO(data), media_type=rec.mime or "application/octet-stream", headers=headers)
 
     # 2) fallback: path на диске
     if getattr(rec, "path", None):

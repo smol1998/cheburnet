@@ -100,6 +100,29 @@ class DMRead(Base):
     user = relationship("User", foreign_keys=[user_id])
 
 
+
+# =========================
+# ✅ Voice message metadata
+# =========================
+class VoiceMeta(Base):
+    __tablename__ = "voice_meta"
+    __table_args__ = (UniqueConstraint("file_id", name="uq_voice_file"),)
+
+    id = Column(Integer, primary_key=True)
+    file_id = Column(Integer, ForeignKey("files.id"), nullable=False, index=True)
+
+    # duration in milliseconds (from client)
+    duration_ms = Column(Integer, nullable=False, default=0)
+
+    # JSON string with downsampled waveform bars (0..1 floats)
+    waveform_json = Column(Text, nullable=True)
+
+    codec = Column(String(64), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    file = relationship("File", foreign_keys=[file_id], uselist=False)
+
 # =========================
 # ✅ Web Push subscriptions
 # =========================
