@@ -296,6 +296,13 @@ const vpTime = document.getElementById("vpTime");
 const vpCancel = document.getElementById("vpCancel");
 const vpSend = document.getElementById("vpSend");
 
+
+// Recording bar (Telegram-like) inside composer
+const recBar = document.getElementById("recBar");
+const recBarTime = document.getElementById("recBarTime");
+const recBarHint = document.getElementById("recBarHint");
+
+
 const btnBack = document.getElementById("btnBack");
 
 const pageChats = document.getElementById("pageChats");
@@ -1243,16 +1250,18 @@ function hasComposerContent() {
 }
 
 function updateSendVisibility() {
+  // While recording in locked mode: show send, keep mic visible (locked styling),
+  // and ignore normal "has content" logic.
+  if (_rec && _rec.active && _rec.locked) {
+    if (btnSend) btnSend.classList.remove("isHidden");
+    if (btnMic) btnMic.classList.remove("isHidden");
+    return;
+  }
+
   if (btnSend) {
     const showSend = hasComposerContent();
     btnSend.classList.toggle("isHidden", !showSend);
   }
-
-  // While recording in lock mode: show Send button to finish recording
-  if (btnSend && _rec && _rec.active && _rec.locked) {
-    btnSend.classList.remove("isHidden");
-  }
-
 
   // Telegram-like: show mic only when nothing to send
   if (btnMic) {
@@ -1319,37 +1328,27 @@ function _drawWave(canvas, bars, progress01 = 0) {
 }
 
 function _ensureRecOverlay() {
-  let el = document.getElementById("recOverlay");
-  if (el) return el;
-
-  el = document.createElement("div");
-  el.id = "recOverlay";
-  el.className = "recOverlay";
-  el.innerHTML = `
-    <div class="recDot"></div>
-    <div class="recText" id="recOverlayTime">0:00</div>
-    <div class="recHint" id="recOverlayHint">← отмена · ↑ <span class="recLock">lock</span></div>
-  `;
-  document.body.appendChild(el);
-  return el;
+  // legacy no-op (we render recording UI inside composer)
+  return null;
 }
 
 function _showRecOverlay(show) {
-  const el = _ensureRecOverlay();
-  el.classList.toggle("show", !!show);
+  if (!recBar) return;
+  recBar.classList.toggle("isHidden", !show);
+  if (text) text.classList.toggle("isHidden", !!show);
 }
 
 function _setRecOverlay(timeText, hintText) {
-  const t = document.getElementById("recOverlayTime");
-  const h = document.getElementById("recOverlayHint");
-  if (t && timeText != null) t.textContent = timeText;
-  if (h && hintText != null) h.innerHTML = hintText;
+  if (recBarTime && timeText != null) recBarTime.textContent = String(timeText);
+  if (recBarHint && hintText != null) recBarHint.innerHTML = String(hintText);
 }
 
 let _rec = {
   active: false,
   locked: false,
   cancelled: false,
+  sendOnStop: false,
+  sendPreview: true,
   stream: null,
   mediaRecorder: null,
   chunks: [],
@@ -1361,7 +1360,6 @@ let _rec = {
   startY: 0,
   dx: 0,
   dy: 0,
-  autoSend: false,
 };
 
 async function _getBestAudioMime() {
@@ -1400,6 +1398,15 @@ async function _startRecording(pointerEvent) {
   const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
 
   _rec.active = true;
+
+  _rec.locked = false;
+  _rec.cancelled = false;
+  _rec.sendOnStop = false;
+
+  try { btnMic && btnMic.classList.add("recording"); } catch (_) {}
+  try { btnMic && btnMic.classList.remove("locked"); } catch (_) {}
+  try { btnSend && btnSend.classList.add("isHidden"); } catch (_) {}
+
   _rec.locked = false;
   _rec.cancelled = false;
   _rec.stream = stream;
@@ -1412,7 +1419,6 @@ async function _startRecording(pointerEvent) {
   _rec.startY = pointerEvent?.clientY ?? 0;
   _rec.dx = 0;
   _rec.dy = 0;
-  _rec.autoSend = false;
 
   // live waveform via analyser
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -1477,9 +1483,10 @@ async function _startRecording(pointerEvent) {
     cancelAnimationFrame(_rec.raf);
     _rec.raf = 0;
     _showRecOverlay(false);
-    try { btnMic && btnMic.classList.remove("locked"); btnMic && btnMic.classList.remove("recording"); } catch (_) {}
 
     if (wasCancelled) {
+      try { btnMic && btnMic.classList.remove("recording"); btnMic && btnMic.classList.remove("locked"); } catch (_) {}
+      try { btnSend && btnSend.classList.add("isHidden"); } catch (_) {}
       _clearVoiceDraft();
       updateSendVisibility();
       return;
@@ -1488,17 +1495,22 @@ async function _startRecording(pointerEvent) {
     const blob = new Blob(_rec.chunks, { type: mr.mimeType || "audio/webm" });
     _rec.chunks = [];
 
+    try { btnMic && btnMic.classList.remove("recording"); btnMic && btnMic.classList.remove("locked"); } catch (_) {}
+    try { btnSend && btnSend.classList.add("isHidden"); } catch (_) {}
+
+    if (_rec.sendOnStop) {
+      // locked-send: send without preview (Telegram behavior)
+      _rec.sendOnStop = false;
+      _clearVoiceDraft();
+      updateSendVisibility();
+      await _sendVoiceBlobDirect(blob, durationMs, bars);
+      return;
+    }
+
     _setVoiceDraft(blob, durationMs, bars);
     updateSendVisibility();
-
-    // If user locked and pressed send while recording: auto-send without extra preview tap
-    if (_rec.autoSend) {
-      _rec.autoSend = false;
-      try { await sendVoiceDraft(); } catch (_) {}
-    }
   };
 
-  try { btnMic && btnMic.classList.add("recording"); } catch (_) {}
   mr.start(120); // chunk every ~120ms
   _showRecOverlay(true);
   tick();
@@ -1549,8 +1561,11 @@ function _finishRecording() {
 function _lockRecording() {
   if (!_rec.active) return;
   _rec.locked = true;
+  _rec.sendOnStop = false;
+  _setRecOverlay(_fmtDur(Date.now() - _rec.startedAt), "🔒 запись… · нажми ➤ чтобы отправить");
   try { btnMic && btnMic.classList.add("locked"); } catch (_) {}
-  _setRecOverlay(_fmtDur(Date.now() - _rec.startedAt), "🔒 запись… (нажми отправить)");
+  try { btnMic && btnMic.classList.remove("recording"); } catch (_) {}
+  try { btnSend && btnSend.classList.remove("isHidden"); } catch (_) {}
 }
 
 function _setVoiceDraft(blob, durationMs, bars) {
@@ -1594,8 +1609,7 @@ function _setupPreviewPlayer() {
     _drawWave(vpWave, voiceDraft.waveform, p);
     if (vpTime) {
       const ms = Math.floor((_vpAudio.currentTime || 0) * 1000);
-      // keep a single timing value (total duration) to avoid duplicate "current/total"
-      vpTime.textContent = _fmtDur(voiceDraft.durationMs);
+      vpTime.textContent = `${_fmtDur(ms)} / ${_fmtDur(voiceDraft.durationMs)}`;
     }
   };
 
@@ -1653,6 +1667,62 @@ async function uploadVoiceDraft() {
   if (!r.ok) throw new Error(await readError(r));
   return await r.json();
 }
+
+
+async function _sendVoiceBlobDirect(blob, durationMs, bars) {
+  if (!token || !currentChatId || !me) return;
+
+  if (isSending) return;
+  isSending = true;
+  disableSend(true);
+
+  let fileId = null;
+  try {
+    const form = new FormData();
+    form.append("file", blob, "voice.webm");
+    form.append("duration_ms", String(Math.floor(durationMs || 0)));
+    if (bars && bars.length) form.append("waveform", JSON.stringify(bars));
+
+    const rUp = await fetchWithTimeout(API + "/files/voice", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token }, // token header only
+      body: form,
+    }, 60000);
+
+    if (!rUp.ok) throw new Error(await readError(rUp));
+    const up = await rUp.json();
+    fileId = up?.file_id;
+    if (!fileId) throw new Error("No file_id");
+  } catch (e) {
+    isSending = false;
+    disableSend(false);
+    alert("Voice upload failed: " + String(e && e.message ? e.message : e));
+    return;
+  }
+
+  try {
+    const r = await fetchWithTimeout(API + `/chats/dm/${currentChatId}/send`, {
+      method: "POST",
+      headers: authHeadersJson(),
+      body: JSON.stringify({ text: null, file_ids: [fileId] }),
+    }, 60000);
+
+    isSending = false;
+    disableSend(false);
+
+    if (!r.ok) {
+      alert("Send failed: " + (await readError(r)));
+      return;
+    }
+
+    // message will arrive via WS; also add local if needed
+  } catch (e) {
+    isSending = false;
+    disableSend(false);
+    alert("Send failed: " + String(e && e.message ? e.message : e));
+  }
+}
+
 
 async function sendVoiceDraft() {
   if (!token) return alert("Login first");
@@ -1745,7 +1815,7 @@ function _bindVoiceUI() {
     e.stopPropagation();
 
     if (_rec.locked) {
-      // locked: keep recording; user will press Send to finish
+      // Telegram-style: releasing finger after lock should NOT stop or send
       return;
     }
 
@@ -1760,16 +1830,6 @@ function _bindVoiceUI() {
   btnMic.addEventListener("pointerup", finishFromPointer);
   btnMic.addEventListener("pointercancel", () => {
     if (_rec.active) _cancelRecording();
-  });
-
-
-  // If locked recording: tap mic to cancel
-  btnMic.addEventListener("click", (e) => {
-    if (_rec && _rec.active && _rec.locked) {
-      e.preventDefault();
-      e.stopPropagation();
-      _cancelRecording();
-    }
   });
 }
 
@@ -3207,13 +3267,10 @@ function _makeVoiceNode(att) {
   const wrap = mk("div", { class: "voiceBubble" });
 
   const btn = mk("button", { class: "voicePlay", type: "button", text: "▶" });
-  const wave = mk("canvas", { class: "voiceWave", width: 180, height: 28 });
+  const wave = mk("canvas", { class: "voiceWave", width: 220, height: 32 });
   const meta = mk("div", { class: "voiceMeta" });
   const dur = mk("div", { class: "voiceDur", text: _fmtDur(att.duration_ms || 0) });
   const speed = mk("div", { class: "voiceSpeed", text: "1x" });
-  const prog = mk("div", { class: "voiceProgress" });
-  const bar = mk("i");
-  prog.appendChild(bar);
 
   meta.appendChild(speed);
   meta.appendChild(dur);
@@ -3221,10 +3278,6 @@ function _makeVoiceNode(att) {
   wrap.appendChild(btn);
   wrap.appendChild(wave);
   wrap.appendChild(meta);
-
-  const outer = mk("div");
-  outer.appendChild(wrap);
-  outer.appendChild(prog);
 
   let audio = new Audio();
   audio.preload = "metadata";
@@ -3238,18 +3291,16 @@ function _makeVoiceNode(att) {
   };
   setRate(1.0);
 
-  _drawWave(wave, bars, 0);
-
-  const update = () => {
+  const draw = () => {
     const p = audio.duration ? (audio.currentTime / audio.duration) : 0;
-    bar.style.width = `${Math.max(0, Math.min(1, p)) * 100}%`;
-    _drawWave(wave, bars, p);
+    _drawWave(wave, bars, Math.max(0, Math.min(1, p)));
   };
 
-  audio.addEventListener("timeupdate", update);
+  _drawWave(wave, bars, 0);
+
+  audio.addEventListener("timeupdate", draw);
   audio.addEventListener("ended", () => {
     btn.textContent = "▶";
-    bar.style.width = "0%";
     _drawWave(wave, bars, 0);
   });
 
@@ -3269,19 +3320,18 @@ function _makeVoiceNode(att) {
     setRate(next);
   });
 
-  // seek by clicking progress
-  prog.addEventListener("click", (e) => {
+  // Seek by clicking on waveform (no extra duplicate progress bar)
+  wave.addEventListener("click", (e) => {
     if (!audio.duration) return;
-    const r = prog.getBoundingClientRect();
+    const r = wave.getBoundingClientRect();
     const x = e.clientX - r.left;
     const p = Math.max(0, Math.min(1, x / r.width));
     audio.currentTime = audio.duration * p;
-    update();
+    draw();
   });
 
-  return outer;
+  return wrap;
 }
-
 
 function renderAttachmentsNode(atts) {
   if (!atts || !atts.length) return null;
@@ -3626,13 +3676,6 @@ async function sendMessage() {
   if (!me) return alert("Login first");
   if (isSending) return;
 
-  // If recording is locked: treat Send as 'finish recording and send'
-  if (_rec && _rec.active && _rec.locked) {
-    _rec.autoSend = true;
-    _finishRecording();
-    return;
-  }
-
   // voice draft has its own send flow
   if (hasVoiceDraft()) {
     await sendVoiceDraft();
@@ -3754,7 +3797,16 @@ function bindUI() {
 
   btnFind && (btnFind.onclick = search);
   btnReloadDialogs && (btnReloadDialogs.onclick = async () => await loadDialogs());
-  btnSend && (btnSend.onclick = () => sendMessage());
+  btnSend && (btnSend.onclick = () => {
+    if (_rec && _rec.active && _rec.locked) {
+      // finish + send immediately
+      _rec.sendOnStop = true;
+      _finishRecording();
+      _showRecOverlay(false);
+      return;
+    }
+    sendMessage();
+  });
 
   btnLogout && (btnLogout.onclick = logout);
 
