@@ -1314,20 +1314,35 @@
 
     /* === Voice messages === */
     .micBtn{
-      height: var(--btnH);
-      width: var(--btnH);
-      border-radius: 999px;
-      border:1px solid rgba(255,255,255,.10);
-      background: rgba(255,255,255,.06);
-      color: var(--text);
-      display:grid;
-      place-items:center;
+      height:40px;
+      width:40px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.05);
+      color:rgba(255,255,255,.85);
       cursor:pointer;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
       user-select:none;
       -webkit-user-select:none;
       touch-action:none;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: transform .12s ease, background .16s ease, border-color .16s ease, box-shadow .16s ease;
     }
-    .micBtn:active{ transform: scale(.98); }
+    .micBtn:hover{ background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.16); }
+    .micBtn.recording{
+      border-color: rgba(255,90,90,.46);
+      background: rgba(255,90,90,.12);
+      box-shadow: 0 0 0 3px rgba(255,90,90,.10), 0 12px 30px rgba(255,0,0,.14);
+    }
+    .micBtn.locked{
+      border-color: rgba(209,254,23,.46);
+      background: rgba(209,254,23,.12);
+      box-shadow: 0 0 0 3px rgba(209,254,23,.10), 0 12px 30px rgba(209,254,23,.10);
+    }
+
     .micBtn.isHidden{ display:none; }
 
     .voicePreview{

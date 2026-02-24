@@ -1248,6 +1248,12 @@ function updateSendVisibility() {
     btnSend.classList.toggle("isHidden", !showSend);
   }
 
+  // While recording in lock mode: show Send button to finish recording
+  if (btnSend && _rec && _rec.active && _rec.locked) {
+    btnSend.classList.remove("isHidden");
+  }
+
+
   // Telegram-like: show mic only when nothing to send
   if (btnMic) {
     const showMic = !hasComposerContent();
@@ -1355,6 +1361,7 @@ let _rec = {
   startY: 0,
   dx: 0,
   dy: 0,
+  autoSend: false,
 };
 
 async function _getBestAudioMime() {
@@ -1405,6 +1412,7 @@ async function _startRecording(pointerEvent) {
   _rec.startY = pointerEvent?.clientY ?? 0;
   _rec.dx = 0;
   _rec.dy = 0;
+  _rec.autoSend = false;
 
   // live waveform via analyser
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -1469,6 +1477,7 @@ async function _startRecording(pointerEvent) {
     cancelAnimationFrame(_rec.raf);
     _rec.raf = 0;
     _showRecOverlay(false);
+    try { btnMic && btnMic.classList.remove("locked"); btnMic && btnMic.classList.remove("recording"); } catch (_) {}
 
     if (wasCancelled) {
       _clearVoiceDraft();
@@ -1481,8 +1490,15 @@ async function _startRecording(pointerEvent) {
 
     _setVoiceDraft(blob, durationMs, bars);
     updateSendVisibility();
+
+    // If user locked and pressed send while recording: auto-send without extra preview tap
+    if (_rec.autoSend) {
+      _rec.autoSend = false;
+      try { await sendVoiceDraft(); } catch (_) {}
+    }
   };
 
+  try { btnMic && btnMic.classList.add("recording"); } catch (_) {}
   mr.start(120); // chunk every ~120ms
   _showRecOverlay(true);
   tick();
@@ -1533,6 +1549,7 @@ function _finishRecording() {
 function _lockRecording() {
   if (!_rec.active) return;
   _rec.locked = true;
+  try { btnMic && btnMic.classList.add("locked"); } catch (_) {}
   _setRecOverlay(_fmtDur(Date.now() - _rec.startedAt), "🔒 запись… (нажми отправить)");
 }
 
@@ -1577,7 +1594,8 @@ function _setupPreviewPlayer() {
     _drawWave(vpWave, voiceDraft.waveform, p);
     if (vpTime) {
       const ms = Math.floor((_vpAudio.currentTime || 0) * 1000);
-      vpTime.textContent = `${_fmtDur(ms)} / ${_fmtDur(voiceDraft.durationMs)}`;
+      // keep a single timing value (total duration) to avoid duplicate "current/total"
+      vpTime.textContent = _fmtDur(voiceDraft.durationMs);
     }
   };
 
@@ -1727,8 +1745,7 @@ function _bindVoiceUI() {
     e.stopPropagation();
 
     if (_rec.locked) {
-      // locked: keep recording, user will press send (vpSend) which triggers stop via pointerup? we need stop now and open preview
-      _finishRecording();
+      // locked: keep recording; user will press Send to finish
       return;
     }
 
@@ -1743,6 +1760,16 @@ function _bindVoiceUI() {
   btnMic.addEventListener("pointerup", finishFromPointer);
   btnMic.addEventListener("pointercancel", () => {
     if (_rec.active) _cancelRecording();
+  });
+
+
+  // If locked recording: tap mic to cancel
+  btnMic.addEventListener("click", (e) => {
+    if (_rec && _rec.active && _rec.locked) {
+      e.preventDefault();
+      e.stopPropagation();
+      _cancelRecording();
+    }
   });
 }
 
@@ -3598,6 +3625,13 @@ async function sendMessage() {
   if (!currentChatId) return alert("Select dialog");
   if (!me) return alert("Login first");
   if (isSending) return;
+
+  // If recording is locked: treat Send as 'finish recording and send'
+  if (_rec && _rec.active && _rec.locked) {
+    _rec.autoSend = true;
+    _finishRecording();
+    return;
+  }
 
   // voice draft has its own send flow
   if (hasVoiceDraft()) {
