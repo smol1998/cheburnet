@@ -35,8 +35,8 @@
 
       --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
 
-      --btnH:42px;
-      --inputH:42px;
+      --btnH:32px;
+      --inputH:32px;
 
       --sat: env(safe-area-inset-top, 0px);
       --sar: env(safe-area-inset-right, 0px);
@@ -599,6 +599,8 @@
       box-shadow:0 0 0 3px rgba(255,255,255,.06);
     }
 
+    .input.isHidden{ opacity:0; visibility:hidden; pointer-events:none; }
+
     .btn{
       height:var(--btnH);
       border-radius:12px;
@@ -699,7 +701,7 @@
       padding:6px;
       border-radius:16px;
       background:rgba(255,255,255,.05);
-      border:1px solid rgba(255,255,255,.10);
+      border:1px solid rgba(255,255,255,.14);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
     }
@@ -1027,11 +1029,11 @@
 
     /* composer */
     .composer{
-      padding:10px 12px;
+      padding:6px 10px;
       border-top:1px solid rgba(255,255,255,.10);
       display:grid;
       grid-template-columns: 1fr auto auto;
-      gap:10px;
+      gap:8px;
       align-items:center;
       background:rgba(255,255,255,.02);
       backdrop-filter: blur(18px);
@@ -1343,22 +1345,67 @@
     .micBtn:active{ transform: scale(.98); }
     .micBtn.isHidden{ display:none; }
 
+
     .voicePreview{
-      width:100%;
-      margin-bottom:10px;
+      position:fixed;
+      right:18px;
+      bottom:86px; /* above composer */
+      width:min(420px, calc(100% - 36px));
       padding:10px 12px;
-      border-radius: 14px;
-      border: 1px solid rgba(255,255,255,.10);
-      background: rgba(255,255,255,.06);
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(22,22,22,.86);
+      box-shadow: 0 18px 46px rgba(0,0,0,.55);
       display:flex;
       align-items:center;
       justify-content:space-between;
       gap:12px;
+      z-index: 50;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
     }
     .voicePreview.isHidden{ display:none; }
+
+    .vpRight{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      align-items:stretch;
+    }
+
+    .vpBtn{
+      height:30px;
+      border-radius:12px;
+      padding:0 12px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.06);
+      color: var(--text);
+      font-weight:800;
+      cursor:pointer;
+      white-space:nowrap;
+      line-height:1;
+    }
+    .vpBtn.danger{
+      border-color: rgba(255,80,80,.35);
+      background: rgba(255,80,80,.12);
+    }
+    .vpBtn.accent{
+      border-color: rgba(209,254,23,.45);
+      background: rgba(209,254,23,.16);
+      color: rgba(255,255,255,.95);
+    }
+
+    .vpProgress{
+      font-size:12px;
+      opacity:.75;
+      margin-left:auto;
+      display:none;
+    }
+    .vpProgress.show{ display:block; }
+
     .vpLeft{ display:flex;align-items:center;gap:10px;min-width:0;flex:1; }
     .vpPlay{
-      height:34px;width:34px;border-radius:999px;
+      height:30px;width:34px;border-radius:999px;
       border:1px solid rgba(255,255,255,.12);
       background: rgba(0,0,0,.20);
       color: var(--text);
@@ -1369,7 +1416,7 @@
 
     .vpRight{ display:flex; gap:8px; align-items:center; }
     .vpBtn{
-      height:34px;
+      height:30px;
       padding:0 12px;
       border-radius:999px;
       border:1px solid rgba(255,255,255,.10);
@@ -1400,7 +1447,7 @@
     }
     .msg.me .voiceBubble{ background: rgba(255,255,255,.045); }
     .voicePlay{
-      height:34px;width:34px;border-radius:999px;
+      height:30px;width:34px;border-radius:999px;
       border:1px solid rgba(255,255,255,.12);
       background: rgba(0,0,0,.20);
       color: var(--text);
@@ -1469,6 +1516,8 @@
    Telegram-like recording bar (inside composer)
    ========================= */
 .composerLeft{ position: relative; }
+.composer.isRecording .input{ opacity:0; visibility:hidden; }
+.composer.isRecording .input::placeholder{ color:transparent; }
 .recBar{
       position:absolute;
       inset:0;
@@ -1478,7 +1527,7 @@
       padding:0 12px;
       border-radius:12px;
       border:1px solid rgba(255,255,255,.10);
-      background: rgba(0,0,0,.28);
+      background: rgba(10,10,10,.92);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
       pointer-events:none; /* purely informative */
@@ -1640,9 +1689,10 @@
                 <button class="vpPlay" id="vpPlay" type="button" aria-label="Play/Pause">▶</button>
                 <canvas class="vpWave" id="vpWave" width="220" height="32"></canvas>
                 <div class="vpTime" id="vpTime">0:00</div>
+                <div class="vpProgress" id="vpProgress"></div>
               </div>
               <div class="vpRight">
-                <button class="vpBtn ghost" id="vpCancel" type="button">Отмена</button>
+                <button class="vpBtn danger" id="vpCancel" type="button">Отмена</button>
                 <button class="vpBtn accent" id="vpSend" type="button">Отправить</button>
               </div>
             </div>
@@ -1763,6 +1813,6 @@
 
   </div>
 
-  <script src="/static/app.js?v=8005"></script>
+  <script src="/static/app.js?v=8004"></script>
 </body>
 </html>

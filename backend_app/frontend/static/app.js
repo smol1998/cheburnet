@@ -293,12 +293,14 @@ const voicePreview = document.getElementById("voicePreview");
 const vpPlay = document.getElementById("vpPlay");
 const vpWave = document.getElementById("vpWave");
 const vpTime = document.getElementById("vpTime");
+const vpProgress = document.getElementById("vpProgress");
 const vpCancel = document.getElementById("vpCancel");
 const vpSend = document.getElementById("vpSend");
 
 
 // Recording bar (Telegram-like) inside composer
 const recBar = document.getElementById("recBar");
+const composerEl = document.querySelector(".composer");
 const recBarTime = document.getElementById("recBarTime");
 const recBarHint = document.getElementById("recBarHint");
 
@@ -1281,6 +1283,9 @@ function disableSend(disabled) {
    Voice messages
    ========================= */
 
+const VOICE_MIN_DURATION_MS = 450; // ignore accidental taps
+const VOICE_MAX_DURATION_MS = 5 * 60 * 1000; // safety cap
+
 function _fmtDur(ms) {
   const s = Math.max(0, Math.floor((ms || 0) / 1000));
   const m = Math.floor(s / 60);
@@ -1335,7 +1340,9 @@ function _ensureRecOverlay() {
 function _showRecOverlay(show) {
   if (!recBar) return;
   recBar.classList.toggle("isHidden", !show);
+  recBar.setAttribute("aria-hidden", show ? "false" : "true");
   if (text) text.classList.toggle("isHidden", !!show);
+  if (composerEl) composerEl.classList.toggle("isRecording", !!show);
 }
 
 function _setRecOverlay(timeText, hintText) {
@@ -1345,6 +1352,7 @@ function _setRecOverlay(timeText, hintText) {
 
 let _rec = {
   active: false,
+  stopTimer: 0,
   locked: false,
   cancelled: false,
   sendOnStop: false,
@@ -1368,6 +1376,9 @@ async function _getBestAudioMime() {
     "audio/webm",
     "audio/ogg;codecs=opus",
     "audio/ogg",
+    // Safari/iOS fallbacks
+    "audio/mp4",
+    "audio/aac",
   ];
   if (!window.MediaRecorder) return "";
   for (const t of prefs) {
@@ -1475,6 +1486,7 @@ async function _startRecording(pointerEvent) {
 
     const wasCancelled = _rec.cancelled;
     const durationMs = Date.now() - _rec.startedAt;
+    try { if (_rec.stopTimer) { clearTimeout(_rec.stopTimer); _rec.stopTimer = 0; } } catch (_) {}
     const bars = _downsampleBars(_rec.bars, 64);
 
     _rec.active = false;
@@ -1495,6 +1507,13 @@ async function _startRecording(pointerEvent) {
     const blob = new Blob(_rec.chunks, { type: mr.mimeType || "audio/webm" });
     _rec.chunks = [];
 
+    // drop too-short recordings (Telegram-like)
+    if (durationMs < VOICE_MIN_DURATION_MS || (blob && blob.size < 800)) {
+      _clearVoiceDraft();
+      updateSendVisibility();
+      return;
+    }
+
     try { btnMic && btnMic.classList.remove("recording"); btnMic && btnMic.classList.remove("locked"); } catch (_) {}
     try { btnSend && btnSend.classList.add("isHidden"); } catch (_) {}
 
@@ -1514,6 +1533,14 @@ async function _startRecording(pointerEvent) {
   mr.start(120); // chunk every ~120ms
   _showRecOverlay(true);
   tick();
+
+  // safety: auto-stop after max duration
+  try { if (_rec.stopTimer) clearTimeout(_rec.stopTimer); } catch (_) {}
+  _rec.stopTimer = setTimeout(() => {
+    if (_rec.active) {
+      _finishRecording();
+    }
+  }, VOICE_MAX_DURATION_MS + 50);
 
   // prevent accidental focus on input while recording
   if (text) text.blur();
@@ -1675,11 +1702,13 @@ async function _sendVoiceBlobDirect(blob, durationMs, bars) {
   if (isSending) return;
   isSending = true;
   disableSend(true);
+  try { if (vpProgress) { vpProgress.textContent = "Отправка…"; vpProgress.classList.add("show"); } } catch (_) {}
 
   let fileId = null;
   try {
     const form = new FormData();
-    form.append("file", blob, "voice.webm");
+    const ext = (blob && (blob.type || "").includes("mp4")) ? "m4a" : ((blob && (blob.type || "").includes("ogg")) ? "ogg" : "webm");
+    form.append("file", blob, `voice.${ext}`);
     form.append("duration_ms", String(Math.floor(durationMs || 0)));
     if (bars && bars.length) form.append("waveform", JSON.stringify(bars));
 
@@ -1696,6 +1725,7 @@ async function _sendVoiceBlobDirect(blob, durationMs, bars) {
   } catch (e) {
     isSending = false;
     disableSend(false);
+    try { if (vpProgress) { vpProgress.classList.remove("show"); vpProgress.textContent = ""; } } catch (_) {}
     alert("Voice upload failed: " + String(e && e.message ? e.message : e));
     return;
   }
@@ -1709,6 +1739,7 @@ async function _sendVoiceBlobDirect(blob, durationMs, bars) {
 
     isSending = false;
     disableSend(false);
+    try { if (vpProgress) { vpProgress.classList.remove("show"); vpProgress.textContent = ""; } } catch (_) {}
 
     if (!r.ok) {
       alert("Send failed: " + (await readError(r)));
@@ -1719,6 +1750,7 @@ async function _sendVoiceBlobDirect(blob, durationMs, bars) {
   } catch (e) {
     isSending = false;
     disableSend(false);
+    try { if (vpProgress) { vpProgress.classList.remove("show"); vpProgress.textContent = ""; } } catch (_) {}
     alert("Send failed: " + String(e && e.message ? e.message : e));
   }
 }
@@ -1741,6 +1773,7 @@ async function sendVoiceDraft() {
   } catch (e) {
     isSending = false;
     disableSend(false);
+    try { if (vpProgress) { vpProgress.classList.remove("show"); vpProgress.textContent = ""; } } catch (_) {}
     alert("Voice upload failed: " + String(e && e.message ? e.message : e));
     return;
   }
@@ -1754,6 +1787,7 @@ async function sendVoiceDraft() {
 
     isSending = false;
     disableSend(false);
+    try { if (vpProgress) { vpProgress.classList.remove("show"); vpProgress.textContent = ""; } } catch (_) {}
 
     if (!r.ok) {
       alert("Send failed: " + (await readError(r)));
@@ -1769,6 +1803,7 @@ async function sendVoiceDraft() {
   } catch (e) {
     isSending = false;
     disableSend(false);
+    try { if (vpProgress) { vpProgress.classList.remove("show"); vpProgress.textContent = ""; } } catch (_) {}
     alert("Send failed: network/timeout");
     return;
   }
@@ -2170,6 +2205,7 @@ function setUploadProgress(pct) {
 
 function hideUploadUI() {
   disableSend(false);
+    try { if (vpProgress) { vpProgress.classList.remove("show"); vpProgress.textContent = ""; } } catch (_) {}
   if (sfRemove) {
     sfRemove.classList.remove("uploading");
     sfRemove.classList.add("done");
@@ -3723,6 +3759,7 @@ async function sendMessage() {
     saveDraftForCurrentChat();
     isSending = false;
     disableSend(false);
+    try { if (vpProgress) { vpProgress.classList.remove("show"); vpProgress.textContent = ""; } } catch (_) {}
     alert("Send failed: network/timeout");
     updateSendVisibility();
     return;
@@ -3730,6 +3767,7 @@ async function sendMessage() {
 
   isSending = false;
   disableSend(false);
+    try { if (vpProgress) { vpProgress.classList.remove("show"); vpProgress.textContent = ""; } } catch (_) {}
 
   if (!r.ok) {
     text.value = prevText;
